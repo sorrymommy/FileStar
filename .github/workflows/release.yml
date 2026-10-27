@@ -1,0 +1,24 @@
+# Pushing a tag like v1.0.1 builds FileStar and publishes it to GitHub Releases with Velopack;
+# installed copies pick it up the next time they start. The tag must match <Version> in FileStar.csproj.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # create the release and upload its files
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build and publish
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./release/release.ps1 -Publish

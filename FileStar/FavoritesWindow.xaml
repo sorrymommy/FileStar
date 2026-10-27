@@ -1,0 +1,107 @@
+﻿<Window x:Class="FileStar.FavoritesWindow" Foreground="{DynamicResource Th.Text}" Background="{DynamicResource Th.Window.Bg}"
+        Icon="FileStar.ico"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FileStar"
+        Title="즐겨찾기 관리" Width="760" Height="560" MinWidth="560" MinHeight="380"
+        FontFamily="Segoe UI, Malgun Gothic" FontSize="12"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+    </Window.Resources>
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <TreeView x:Name="FavoriteTree" AllowDrop="True" Padding="2,4"
+                  SelectedItemChanged="FavoriteTree_SelectedItemChanged"
+                  KeyDown="FavoriteTree_KeyDown"
+                  PreviewMouseLeftButtonDown="FavoriteTree_PreviewMouseLeftButtonDown"
+                  PreviewMouseMove="FavoriteTree_PreviewMouseMove"
+                  DragOver="FavoriteTree_DragOver"
+                  Drop="FavoriteTree_Drop">
+            <TreeView.Resources>
+                <HierarchicalDataTemplate DataType="{x:Type local:Favorite}" ItemsSource="{Binding Children}">
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <TextBlock x:Name="Glyph" FontFamily="{StaticResource IconFont}" Text="&#xE735;" Foreground="{DynamicResource Th.Favorite.On}"
+                                   FontSize="13" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="NameText" Text="{Binding Name}" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="PathText" Text="{Binding FullPath}" Foreground="{DynamicResource Th.Text.Faint}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <HierarchicalDataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding IsGroup}" Value="True">
+                            <Setter TargetName="Glyph" Property="Text" Value="&#xE8B7;"/>
+                            <Setter TargetName="Glyph" Property="Foreground" Value="{DynamicResource Th.Folder}"/>
+                            <Setter TargetName="NameText" Property="FontWeight" Value="SemiBold"/>
+                            <Setter TargetName="PathText" Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding Exists}" Value="False">
+                            <Setter TargetName="NameText" Property="Foreground" Value="{DynamicResource Th.Error}"/>
+                            <Setter TargetName="PathText" Property="Foreground" Value="{DynamicResource Th.Error}"/>
+                        </DataTrigger>
+                    </HierarchicalDataTemplate.Triggers>
+                </HierarchicalDataTemplate>
+            </TreeView.Resources>
+            <TreeView.ItemContainerStyle>
+                <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                    <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                </Style>
+            </TreeView.ItemContainerStyle>
+        </TreeView>
+
+        <StackPanel Grid.Column="1" Margin="10,0,0,0" Width="140">
+            <StackPanel.Resources>
+                <!-- BasedOn keeps the themed button look (dark mode); only spacing is added here -->
+                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                    <Setter Property="Margin" Value="0,0,0,6"/>
+                    <Setter Property="Padding" Value="6,4"/>
+                </Style>
+            </StackPanel.Resources>
+            <Button Content="새 그룹..." Click="NewGroup_Click"/>
+            <Button x:Name="AddCurrentButton" Content="현재 폴더 추가" Click="AddCurrent_Click"/>
+            <Button Content="폴더 찾아서 추가..." Click="AddBrowse_Click"/>
+            <Button x:Name="RemoveButton" Content="삭제" Click="Remove_Click"/>
+            <Separator Margin="0,4,0,10"/>
+            <Button x:Name="UpButton" Content="위로 ▲" Click="MoveUp_Click"/>
+            <Button x:Name="DownButton" Content="아래로 ▼" Click="MoveDown_Click"/>
+            <Button x:Name="OutdentButton" Content="그룹 밖으로 ◀" Click="Outdent_Click"/>
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0" Foreground="{DynamicResource Th.Text.Muted}" TextWrapping="Wrap"
+                   Text="항목을 끌어서 그룹 위에 놓으면 그룹 안으로, 다른 항목 위에 놓으면 그 앞으로 옮겨집니다. 빈 곳에 놓으면 맨 위 단계 끝으로 갑니다."/>
+
+        <!-- Edit selected -->
+        <Grid x:Name="EditPanel" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Text="표시 이름" VerticalAlignment="Center" Margin="0,0,8,6"/>
+            <TextBox x:Name="NameBox" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,0,0,6" Padding="2,3"
+                     Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"/>
+            <TextBlock x:Name="PathLabel" Grid.Row="1" Text="경로" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox x:Name="PathBox" Grid.Row="1" Grid.Column="1" Padding="2,3"
+                     Text="{Binding FullPath, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button x:Name="BrowsePathButton" Grid.Row="1" Grid.Column="2" Content="찾아보기..." Margin="6,0,0,0" Padding="8,2" Click="BrowsePath_Click"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="확인" Width="84" Padding="0,4" IsDefault="True" Click="Ok_Click"/>
+            <Button Content="취소" Width="84" Padding="0,4" Margin="8,0,0,0" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

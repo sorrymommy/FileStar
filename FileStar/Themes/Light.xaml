@@ -1,0 +1,88 @@
+<!--
+    Light theme colors. Dark.xaml defines the same keys; ThemeManager swaps one for the other, and everything
+    that uses {DynamicResource Th.*} repaints immediately.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Surfaces -->
+    <SolidColorBrush x:Key="Th.Window.Bg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Menu.Bg" Color="#FAFAFA"/>
+    <SolidColorBrush x:Key="Th.Toolbar.Bg" Color="#F7F7F7"/>
+    <SolidColorBrush x:Key="Th.Toolbar.Border" Color="#E3E3E3"/>
+    <SolidColorBrush x:Key="Th.TabStrip.Bg" Color="#F1F1F1"/>
+    <SolidColorBrush x:Key="Th.Tab.Bg" Color="#E2E2E2"/>
+    <SolidColorBrush x:Key="Th.Tab.ActiveBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Status.Bg" Color="#F5F5F5"/>
+    <SolidColorBrush x:Key="Th.Pane.Bg" Color="#FBFAF6"/>
+    <SolidColorBrush x:Key="Th.Preview.Bg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Input.Bg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Popup.Bg" Color="#F9F9F9"/>
+    <SolidColorBrush x:Key="Th.Header.Bg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Control.Bg" Color="#FDFDFD"/>
+
+    <!-- Lines and borders -->
+    <SolidColorBrush x:Key="Th.Border" Color="#DDDDDD"/>
+    <SolidColorBrush x:Key="Th.Input.Border" Color="#C8C8C8"/>
+    <SolidColorBrush x:Key="Th.Separator" Color="#D6D6D6"/>
+    <SolidColorBrush x:Key="Th.Splitter" Color="#EDEDED"/>
+    <SolidColorBrush x:Key="Th.Pane.Border" Color="#E4E0D4"/>
+    <SolidColorBrush x:Key="Th.Memo.Border" Color="#DDD6C4"/>
+    <SolidColorBrush x:Key="Th.Popup.Border" Color="#CCCCCC"/>
+    <SolidColorBrush x:Key="Th.Header.Border" Color="#E5E5E5"/>
+    <SolidColorBrush x:Key="Th.Control.Border" Color="#CCCCCC"/>
+
+    <!-- Text -->
+    <SolidColorBrush x:Key="Th.Text" Color="#1A1A1A"/>
+    <SolidColorBrush x:Key="Th.Text.Secondary" Color="#555555"/>
+    <SolidColorBrush x:Key="Th.Text.Muted" Color="#777777"/>
+    <SolidColorBrush x:Key="Th.Text.Faint" Color="#919191"/>
+    <SolidColorBrush x:Key="Th.Text.Placeholder" Color="#AAAAAA"/>
+    <SolidColorBrush x:Key="Th.Text.Disabled" Color="#BBBBBB"/>
+
+    <!-- Interaction -->
+    <SolidColorBrush x:Key="Th.Hover" Color="#E3ECF7"/>
+    <SolidColorBrush x:Key="Th.HoverLight" Color="#EEF3F9"/>
+    <SolidColorBrush x:Key="Th.Pressed" Color="#C9DAF0"/>
+    <SolidColorBrush x:Key="Th.Selected" Color="#D5E1EE"/>
+    <SolidColorBrush x:Key="Th.Selected.Border" Color="#A9C1DD"/>
+    <!-- Selection in stock control templates (tree rows, list boxes) that read Windows' own highlight colors -->
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#D5E1EE"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#1A1A1A"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#E4E9EF"/>
+    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#1A1A1A"/>
+    <SolidColorBrush x:Key="Th.MenuHover" Color="#E3ECF7"/>
+    <SolidColorBrush x:Key="Th.Header.Hover" Color="#EEF3F9"/>
+    <SolidColorBrush x:Key="Th.Control.Hover" Color="#E5F1FB"/>
+    <SolidColorBrush x:Key="Th.Control.Pressed" Color="#CCE4F7"/>
+    <SolidColorBrush x:Key="Th.TabClose.Hover" Color="#F2C4BD"/>
+    <SolidColorBrush x:Key="Th.Marquee.Fill" Color="#262B79D7"/>
+    <SolidColorBrush x:Key="Th.Marquee.Stroke" Color="#2B79D7"/>
+
+    <!-- Accents -->
+    <SolidColorBrush x:Key="Th.Accent" Color="#2B5797"/>
+    <SolidColorBrush x:Key="Th.Folder" Color="#D9A520"/>
+    <SolidColorBrush x:Key="Th.Favorite.On" Color="#E0A100"/>
+    <SolidColorBrush x:Key="Th.Crumb.Bg" Color="#A8695E"/>
+    <SolidColorBrush x:Key="Th.Crumb.Fg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.TreeLine" Color="#C9C9C9"/>
+    <SolidColorBrush x:Key="Th.TreePath" Color="#C8463D"/>
+    <SolidColorBrush x:Key="Th.TreeArrow" Color="#7A7A7A"/>
+    <SolidColorBrush x:Key="Th.TreeArrow.Hover" Color="#1C6DD0"/>
+    <SolidColorBrush x:Key="Th.TreeBox" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Th.Tag.Bg" Color="#E3ECF7"/>
+    <SolidColorBrush x:Key="Th.Tag.Border" Color="#C5D6EC"/>
+    <SolidColorBrush x:Key="Th.Tag.Fg" Color="#24548C"/>
+    <SolidColorBrush x:Key="Th.Tag.Icon" Color="#2F6DB5"/>
+    <SolidColorBrush x:Key="Th.Note.Fg" Color="#7A5410"/>
+    <SolidColorBrush x:Key="Th.Note.Header" Color="#7A4A12"/>
+    <SolidColorBrush x:Key="Th.Note.Icon" Color="#C26A00"/>
+    <SolidColorBrush x:Key="Th.Ai.Icon" Color="#6B4FBB"/>
+    <SolidColorBrush x:Key="Th.Warn" Color="#B05A00"/>
+    <SolidColorBrush x:Key="Th.Ok" Color="#2E7D32"/>
+    <SolidColorBrush x:Key="Th.Error" Color="#C0392B"/>
+
+    <!-- Scroll bars -->
+    <SolidColorBrush x:Key="Th.Scroll.Track" Color="#F0F0F0"/>
+    <SolidColorBrush x:Key="Th.Scroll.Thumb" Color="#C2C2C2"/>
+    <SolidColorBrush x:Key="Th.Scroll.ThumbHover" Color="#A0A0A0"/>
+</ResourceDictionary>
