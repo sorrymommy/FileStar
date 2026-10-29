@@ -20,7 +20,7 @@ public sealed class FolderPane : DockPanel
     public const double BarHeight = 30;
 
     readonly Border _bar = new() { Height = BarHeight, BorderThickness = new Thickness(0, 0, 0, 2), BorderBrush = Brushes.Transparent };
-    readonly ListView _list = new() { BorderThickness = new Thickness(0), AllowDrop = true, AlternationCount = int.MaxValue };
+    readonly ListView _list = new() { BorderThickness = new Thickness(0), AllowDrop = true };
     FolderPaneViewModel? _vm;
     Point? _dragStart;
 

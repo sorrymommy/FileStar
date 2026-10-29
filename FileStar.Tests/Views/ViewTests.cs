@@ -25,13 +25,20 @@ public sealed class ViewTests : IDisposable
     static async Task AssertNoBindingErrors(Window window, Func<Task>? exercise = null)
     {
         WpfThread.TakeBindingErrors();
+        List<string> errors;
         window.Show();
-        await WpfThread.Settle(200);
-        if (exercise != null)
-            await exercise();
-        await WpfThread.Settle(100);
-        var errors = WpfThread.TakeBindingErrors();
-        window.Close();
+        try
+        {
+            await WpfThread.Settle(200);
+            if (exercise != null)
+                await exercise();
+            await WpfThread.Settle(100);
+            errors = WpfThread.TakeBindingErrors();
+        }
+        finally
+        {
+            window.Close();   // a failed assertion must not leave the window (and its folder watcher) open
+        }
         Assert.True(errors.Count == 0, $"{window.GetType().Name}: {string.Join("\n", errors)}");
     }
 
@@ -78,6 +85,49 @@ public sealed class ViewTests : IDisposable
             vm.IsInfoPaneVisible = true;
         });
         Assert.NotEmpty(_t.Settings.Load().Tabs);
+    });
+
+    /// <summary>The row's "#" cell, wherever the user moved that column.</summary>
+    static TextBlock? NumberCell(DependencyObject row)
+    {
+        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(row); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(row, i);
+            if (child is TextBlock text &&
+                System.Windows.Data.BindingOperations.GetBinding(text, TextBlock.TextProperty)?.Path.Path == nameof(FileItem.RowNumber))
+                return text;
+            if (NumberCell(child) is { } nested)
+                return nested;
+        }
+        return null;
+    }
+
+    [Fact]
+    public void Row_numbers_stay_right_while_scrolling_both_ways() => WpfThread.Run(async () =>
+    {
+        // Numbering by ItemsControl.AlternationIndex showed -2147483xxx here once rows were re-created scrolling up.
+        for (int i = 1; i <= 400; i++)
+            _t.Files.File($@"many\file{i:D3}.txt");
+        var vm = new MainViewModel(_t.Services, new[] { _t.Files.Combine("many") });
+        var window = new MainWindow(vm);
+        await AssertNoBindingErrors(window, async () =>
+        {
+            await Wait.Until(() => vm.FileList.View != null && vm.FileList.LoadingMessage == null, "the list");
+            var list = (ListView)window.FindName("FileList");
+            var scroller = list.FindVisualChild<ScrollViewer>()!;
+            foreach (var scroll in new Action[] { scroller.ScrollToEnd, scroller.ScrollToHome, () => scroller.ScrollToVerticalOffset(150), scroller.ScrollToEnd, () => scroller.ScrollToVerticalOffset(40) })
+            {
+                scroll();
+                await WpfThread.Settle(150);
+                var shown = Enumerable.Range(0, list.Items.Count)
+                    .Select(i => (Index: i, Row: list.ItemContainerGenerator.ContainerFromIndex(i) as ListViewItem))
+                    .Where(r => r.Row != null)
+                    .ToList();
+                Assert.NotEmpty(shown);
+                foreach (var (index, row) in shown)
+                    Assert.Equal((index + 1).ToString(), (NumberCell(row!) ?? throw new InvalidOperationException("no # cell")).Text);
+            }
+        });
     });
 
     [Fact]

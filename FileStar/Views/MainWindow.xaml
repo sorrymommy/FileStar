@@ -12,7 +12,6 @@
         MouseUp="Window_MouseUp"
         Closing="Window_Closing">
     <Window.Resources>
-        <conv:RowNumberConverter x:Key="RowNumberConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
         <conv:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility"/>
         <conv:InverseBoolConverter x:Key="InverseBool"/>
@@ -831,7 +830,7 @@
                 </StackPanel>
             </Border>
             <ListView x:Name="FileList" Grid.Column="2" BorderThickness="0" ItemsSource="{Binding FileList.View}"
-                      SelectionMode="Extended" AlternationCount="2147483647"
+                      SelectionMode="Extended"
                       IsTextSearchEnabled="True" TextSearch.TextPath="Name"
                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Standard"
                       MouseDoubleClick="FileList_MouseDoubleClick"
@@ -870,7 +869,7 @@
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Foreground="{DynamicResource Th.Text.Faint}" TextAlignment="Right"
-                                               Text="{Binding (ItemsControl.AlternationIndex), RelativeSource={RelativeSource AncestorType=ListViewItem}, Converter={StaticResource RowNumberConverter}}"/>
+                                               Text="{Binding RowNumber}"/>
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>

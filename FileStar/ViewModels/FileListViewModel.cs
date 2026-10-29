@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows.Data;
 
@@ -12,6 +13,9 @@ public sealed class FileListViewModel : ObservableObject
 {
     readonly IFileSystem _files;
     readonly INotesStore _notes;
+    // Created on the UI thread (as the list view needs anyway); without a context, rows added one by one would
+    // each renumber the whole list.
+    readonly SynchronizationContext? _ui = SynchronizationContext.Current;
     CancellationTokenSource? _loadCts;
     ListCollectionView? _view;
     IReadOnlyList<FileItem> _selected = Array.Empty<FileItem>();
@@ -20,7 +24,7 @@ public sealed class FileListViewModel : ObservableObject
     Predicate<FileItem>? _hide;
     string? _loadingMessage, _statusSuffix;
     string _emptyText = "이 폴더는 비어 있습니다.";
-    bool _isEmpty;
+    bool _isEmpty, _renumberQueued;
 
     public FileListViewModel(IFileSystem files, INotesStore notes)
     {
@@ -41,9 +45,21 @@ public sealed class FileListViewModel : ObservableObject
     public ICollectionView? View
     {
         get => _view;
-        private set => Set(ref _view, (ListCollectionView?)value);
+        private set
+        {
+            var view = (ListCollectionView?)value;
+            if (view == _view)
+                return;
+            if (_view != null)
+                ((INotifyCollectionChanged)_view).CollectionChanged -= OnOrderChanged;
+            if (view != null)
+            {
+                ((INotifyCollectionChanged)view).CollectionChanged += OnOrderChanged;
+                Number(view);   // before the list draws it
+            }
+            Set(ref _view, view);
+        }
     }
-
 
     /// <summary>Every row, ignoring the filter.</summary>
     public IEnumerable<FileItem> AllItems => _view?.SourceCollection.Cast<FileItem>() ?? Enumerable.Empty<FileItem>();
@@ -95,10 +111,7 @@ public sealed class FileListViewModel : ObservableObject
 
     public void RefreshFilter()
     {
-        if (_view == null)
-            return;
-        _view.Filter = Filter;
-        _view.Refresh();
+        _view?.Refresh();   // the view already holds Filter (ShowItems); setting it again would refresh twice
     }
 
     bool Filter(object item) => _hide == null || !_hide((FileItem)item);
@@ -258,6 +271,33 @@ public sealed class FileListViewModel : ObservableObject
         _statusSuffix = full ? $" · 결과가 많아 {SearchRunner.MaxResults:N0}개까지만 표시 (검색어를 좁혀 보세요)" : $" · {search.Description}";
         LoadingMessage = null;
         return true;
+    }
+
+    // Sorting, filtering and reloading renumber at once. Rows a search adds one by one are numbered once per
+    // batch: renumbering on every insert would be quadratic over a few thousand results.
+    void OnOrderChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action == NotifyCollectionChangedAction.Reset || _ui == null)
+            Renumber();
+        else if (!_renumberQueued)
+        {
+            _renumberQueued = true;
+            _ui.Post(_ => Renumber(), null);
+        }
+    }
+
+    void Renumber()
+    {
+        _renumberQueued = false;
+        if (_view != null)
+            Number(_view);
+    }
+
+    static void Number(ListCollectionView view)
+    {
+        int number = 1;
+        foreach (FileItem item in view)
+            item.RowNumber = number++;
     }
 
     void ShowItems(System.Collections.IList items) =>

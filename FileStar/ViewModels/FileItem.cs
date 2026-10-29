@@ -12,6 +12,17 @@ public sealed class FileItem : ObservableObject
     ImageSource? _icon;
     bool _iconLoaded;
     string? _typeName;
+    int _rowNumber;
+
+    /// <summary>
+    /// 1-based position in the list as shown (sorted and filtered): the "#" column. Set by its list, so a row
+    /// belongs to one list only (each list loads its own rows).
+    /// </summary>
+    public int RowNumber
+    {
+        get => _rowNumber;
+        set => Set(ref _rowNumber, value);
+    }
 
     /// <summary>The name cell is showing an edit box (F2).</summary>
     public bool IsRenaming
