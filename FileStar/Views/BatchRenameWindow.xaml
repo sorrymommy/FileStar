@@ -1,0 +1,78 @@
+<Window x:Class="FileStar.Views.BatchRenameWindow" Foreground="{DynamicResource Th.Text}" Background="{DynamicResource Th.Window.Bg}"
+        Icon="pack://application:,,,/FileStar;component/FileStar.ico"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}" Width="720" Height="560" MinWidth="520" MinHeight="400"
+        FontFamily="Segoe UI, Malgun Gothic" FontSize="12"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style x:Key="OptionLabel" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="18,0,8,6"/>
+        </Style>
+        <Style x:Key="OptionBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Padding" Value="2,3"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel Margin="16">
+        <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <!-- Typing in a mode's boxes switches to that mode -->
+            <RadioButton Grid.ColumnSpan="4" Content="찾아 바꾸기" IsChecked="{Binding ReplaceMode}" Margin="0,0,0,6"/>
+            <TextBlock Grid.Row="1" Text="찾을 글자" Style="{StaticResource OptionLabel}"/>
+            <TextBox x:Name="FindBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource OptionBox}"
+                     Text="{Binding Find, UpdateSourceTrigger=PropertyChanged}" GotFocus="ReplaceBox_GotFocus"/>
+            <TextBlock Grid.Row="1" Grid.Column="2" Text="바꿀 글자" Style="{StaticResource OptionLabel}"/>
+            <TextBox Grid.Row="1" Grid.Column="3" Style="{StaticResource OptionBox}"
+                     Text="{Binding Replace, UpdateSourceTrigger=PropertyChanged}" GotFocus="ReplaceBox_GotFocus"/>
+            <RadioButton Grid.Row="2" Grid.ColumnSpan="4" Content="새 이름 규칙" IsChecked="{Binding PatternMode}" Margin="0,10,0,6"/>
+            <TextBlock Grid.Row="3" Text="규칙" Style="{StaticResource OptionLabel}"/>
+            <TextBox Grid.Row="3" Grid.Column="1" Style="{StaticResource OptionBox}"
+                     Text="{Binding Pattern, UpdateSourceTrigger=PropertyChanged}" GotFocus="PatternBox_GotFocus"
+                     ToolTip="{}{name} 원래 이름 · {n} 번호(001처럼 자릿수는 시작 번호에 맞춤) · {date} 수정한 날짜(20261027)"/>
+            <TextBlock Grid.Row="3" Grid.Column="2" Text="시작 번호" Style="{StaticResource OptionLabel}"/>
+            <TextBox Grid.Row="3" Grid.Column="3" Style="{StaticResource OptionBox}"
+                     Text="{Binding Start, UpdateSourceTrigger=PropertyChanged}" GotFocus="PatternBox_GotFocus"/>
+        </Grid>
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Margin="0,0,0,6" Foreground="{DynamicResource Th.Text.Faint}"
+                   Text="규칙: {name} 원래 이름, {n} 번호 (시작 번호를 001로 쓰면 001, 002 …), {date} 수정한 날짜. 목록 순서대로 번호가 붙습니다."/>
+        <CheckBox DockPanel.Dock="Top" Content="확장자도 바꾸기 (보통은 끔)" Margin="0,0,0,8" IsChecked="{Binding IncludeExtension}"/>
+
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <Button DockPanel.Dock="Right" Content="취소" Width="84" Padding="0,4" Margin="8,0,0,0" IsCancel="True"/>
+            <Button DockPanel.Dock="Right" Content="{Binding ApplyText}" Width="100" Padding="0,4" IsDefault="True" Click="Ok_Click">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ChangingCount}" Value="0">
+                                <Setter Property="IsEnabled" Value="False"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <TextBlock Text="{Binding ProblemText}" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{DynamicResource Th.Error}"/>
+        </DockPanel>
+
+        <ListView ItemsSource="{Binding Rows}">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="지금 이름" Width="300" DisplayMemberBinding="{Binding Old}"/>
+                    <GridViewColumn Header="새 이름" Width="300" DisplayMemberBinding="{Binding New}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+    </DockPanel>
+</Window>

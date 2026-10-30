@@ -11,7 +11,7 @@
     <Product>FileStar</Product>
     <AssemblyTitle>FileStar</AssemblyTitle>
     <ApplicationIcon>FileStar.ico</ApplicationIcon>
-    <!-- Shown in 설정 > 앱 and used for the installer's file name (installer/build-installer.ps1) -->
+    <!-- Shown in 설정 > 앱; a release tag (v1.0.0) must match it, see .github/workflows/release.yml -->
     <Version>1.0.0</Version>
     <Company>FileStar</Company>
     <Copyright>Copyright © 2026</Copyright>
@@ -20,7 +20,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Window title-bar/taskbar icon (Icon="FileStar.ico" in the XAML windows) -->
+    <!-- Window title-bar/taskbar icon: Icon="pack://application:,,,/FileStar;component/FileStar.ico" in the XAML windows -->
     <Resource Include="FileStar.ico" />
   </ItemGroup>
 
