@@ -10,7 +10,7 @@ public sealed class FileItem : ObservableObject
     bool _isRenaming, _containsNotes;
     CompareState _compareState;
     ImageSource? _icon;
-    bool _iconLoaded;
+    bool _iconLoaded, _shellInfoPending, _iconShownBlank, _typeShownBlank;
     string? _typeName;
     int _rowNumber;
 
@@ -147,20 +147,83 @@ public sealed class FileItem : ObservableObject
 
     public bool IsZip => !IsDirectory && Extension == "zip";
 
+    /// <summary>The shell icon; blank while its list is still fetching it (see <see cref="DeferShellInfo"/>).</summary>
     public ImageSource? Icon
     {
         get
         {
             if (!_iconLoaded)
             {
-                _icon = ShellInfo.GetIcon(FullPath, IsDirectory, ExactIcon);
+                if (_shellInfoPending)
+                {
+                    if (!ShellInfo.TryGetCachedIcon(FullPath, IsDirectory, ExactIcon, out var cached))
+                    {
+                        _iconShownBlank = true;
+                        return null;
+                    }
+                    _icon = cached;
+                }
+                else
+                    _icon = ShellInfo.GetIcon(FullPath, IsDirectory, ExactIcon);
                 _iconLoaded = true;
             }
             return _icon;
         }
     }
 
-    public string TypeName => _typeName ??= ShellInfo.GetTypeName(RawExtension, IsDirectory);
+    /// <summary>The shell's type name; empty while its list is still fetching it.</summary>
+    public string TypeName
+    {
+        get
+        {
+            if (_typeName != null)
+                return _typeName;
+            if (_shellInfoPending)
+            {
+                if (ShellInfo.TryGetCachedTypeName(RawExtension, IsDirectory, out var cached))
+                    return _typeName = cached!;
+                _typeShownBlank = true;
+                return "";
+            }
+            return _typeName = ShellInfo.GetTypeName(RawExtension, IsDirectory);
+        }
+    }
+
+    /// <summary>
+    /// Its list fetches the icon and type name in the background (asking the shell for an .exe's icon can take
+    /// tens of ms), so until <see cref="ShellInfoArrived"/> the row reads only what is already cached instead of
+    /// stalling the UI thread.
+    /// </summary>
+    public void DeferShellInfo() => _shellInfoPending = true;
+
+    // Whoever got a blank must be told, even if someone else has since read the value from the cache.
+
+    /// <summary>The type name is cached now: bindings that got a blank type read it again.</summary>
+    public void TypeNameArrived()
+    {
+        if (!_typeShownBlank)
+            return;
+        _typeShownBlank = false;
+        OnPropertyChanged(nameof(TypeName));
+        OnPropertyChanged(nameof(Description));
+    }
+
+    /// <summary>
+    /// The icon and type name are cached now, or the fetch gave up (then the row asks the shell itself, as rows
+    /// outside a folder load do): bindings that got a blank read them again.
+    /// </summary>
+    public void ShellInfoArrived()
+    {
+        if (!_shellInfoPending)
+            return;
+        _shellInfoPending = false;
+        TypeNameArrived();
+        if (_iconShownBlank)
+        {
+            _iconShownBlank = false;
+            OnPropertyChanged(nameof(Icon));
+        }
+    }
 
     /// <summary>The folder it is in (the 위치 column of search results).</summary>
     public string FolderPath => Path.GetDirectoryName(FullPath.TrimEnd('\\')) ?? "";

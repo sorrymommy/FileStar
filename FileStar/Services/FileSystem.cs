@@ -15,6 +15,9 @@ public interface IFileSystem
     /// <summary>Subfolders sorted the way Explorer sorts names; empty if the folder can't be read.</summary>
     List<DirectoryInfo> GetSubfolders(string path);
 
+    /// <summary>As <see cref="GetSubfolders"/>, but null if the folder can't be read (rather than empty).</summary>
+    List<DirectoryInfo>? TryGetSubfolders(string path);
+
     bool HasSubfolders(string path);
 }
 
@@ -29,7 +32,9 @@ public sealed class LocalFileSystem : IFileSystem
     public List<FileSystemInfo> GetEntries(string path) =>
         new DirectoryInfo(path).EnumerateFileSystemInfos("*", Options).ToList();
 
-    public List<DirectoryInfo> GetSubfolders(string path)
+    public List<DirectoryInfo> GetSubfolders(string path) => TryGetSubfolders(path) ?? new();
+
+    public List<DirectoryInfo>? TryGetSubfolders(string path)
     {
         try
         {
@@ -39,7 +44,7 @@ public sealed class LocalFileSystem : IFileSystem
         }
         catch
         {
-            return new();
+            return null;
         }
     }
 

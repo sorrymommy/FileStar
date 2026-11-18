@@ -122,6 +122,9 @@ public sealed partial class MainViewModel : ObservableObject
             UpdateTitle();
         };
         Dual.Reloaded += RecomputeCompare;
+        Dual.Reloaded += () => UpdateTreeFrom(Dual.List, Dual.Folder);
+        FileList.ShellInfoUpdated += () => OnShellInfoUpdated(FileList);
+        Dual.List.ShellInfoUpdated += () => OnShellInfoUpdated(Dual.List);
         Dual.FilesChanged += () => Refresh(reloadTree: false);
         Dual.CloseRequested += () => SetDualPane(false);
 
@@ -440,9 +443,20 @@ public sealed partial class MainViewModel : ObservableObject
         Status.Update(FileList);
         if (!loaded)
             return;
+        UpdateTreeFrom(FileList, path);
+        if (!IsDualActive && !Locations.IsVirtual(path) && Tree.RefreshWherePathStops())
+            Tree.Sync(path);
         UpdateInfoPane();
         RecomputeCompare();
         Perf.Log($"load {Path.GetFileName(path)}: {Perf.Now - started} ms");
+    }
+
+    /// <summary>The tree lists the subfolders a list just read in <paramref name="folder"/> (no second read of the disk).</summary>
+    void UpdateTreeFrom(FileListViewModel list, string folder)
+    {
+        if (!Locations.IsVirtual(folder) &&
+            Tree.UpdateSubfolders(folder, list.AllItems.Where(i => i.IsDirectory).Select(i => i.Name).ToList()))
+            Tree.Sync(ActiveFolder);
     }
 
     /// <summary>Reloads the main list, keeping its selection; with <paramref name="reloadTree"/>, the tree around it too.</summary>
@@ -535,6 +549,9 @@ public sealed partial class MainViewModel : ObservableObject
             Tree.Build();
             Tree.Sync(_active.FullPath);
             Refresh(reloadTree: false);
+            // Also so a load it started under the old setting can't put those folders in the rebuilt tree.
+            if (Dual.HasFolder)
+                _ = Dual.ReloadAsync();
         }
     }
 
@@ -665,10 +682,20 @@ public sealed partial class MainViewModel : ObservableObject
         {
             0 when path == null => new(InfoIcon, InfoTitle, (CurrentSearch?.Description ?? "드라이브와 주요 폴더") + " · 항목을 선택하면 메모·태그를 남길 수 있습니다."),
             0 => new(InfoIcon, InfoTitle, "현재 폴더 (항목을 선택하지 않으면 이 폴더의 정보를 보여 줍니다)"),
-            1 => new(selected[0].Icon, selected[0].Name, selected[0].Description),
+            1 => ItemHeader(selected[0]),
             _ => new(null, $"{selected.Count:N0}개 항목 선택됨",
                 $"파일 크기 합계 {SizeFormat.Bytes(selected.Sum(i => i.Size ?? 0))} · 메모와 태그는 한 항목씩 작성할 수 있습니다."),
         };
+    }
+
+    static InfoHeader ItemHeader(FileItem item) => new(item.Icon, item.Name, item.Description);
+
+    /// <summary>A list fills in icons and type names after showing its rows: the header of a row selected meanwhile follows.</summary>
+    void OnShellInfoUpdated(FileListViewModel list)
+    {
+        if (_isInfoPaneVisible && list == (IsDualActive ? Dual.List : FileList) && InfoSelection is [var item]
+            && string.Equals(item.FullPath, Notes.Path, StringComparison.OrdinalIgnoreCase))
+            InfoHeader = ItemHeader(item);
     }
 
     /// <summary>Fills the 속성 tab for the selected item (or current folder); skipped while the tab is hidden.</summary>

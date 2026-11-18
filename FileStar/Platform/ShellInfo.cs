@@ -23,16 +23,30 @@ internal static class ShellInfo
     static readonly Dictionary<string, ImageSource?> IconCache = new(StringComparer.OrdinalIgnoreCase);
     static readonly Dictionary<string, string> TypeCache = new(StringComparer.OrdinalIgnoreCase);
 
-    public static ImageSource? GetIcon(string path, bool isDirectory, bool exact = false)
+    static string IconKey(string path, bool isDirectory, bool exact, out bool perFile)
     {
         string ext = isDirectory ? "" : Path.GetExtension(path);
-        bool perFile = exact || (!isDirectory && PerFileExtensions.Contains(ext));
-        string key = perFile ? "file:" + path : isDirectory ? "<folder>" : "ext:" + ext;
+        perFile = exact || (!isDirectory && PerFileExtensions.Contains(ext));
+        return perFile ? "file:" + path : isDirectory ? "<folder>" : "ext:" + ext;
+    }
+
+    /// <summary>The icon if it is already cached; never asks the shell, so it is safe on the UI thread.</summary>
+    public static bool TryGetCachedIcon(string path, bool isDirectory, bool exact, out ImageSource? icon)
+    {
+        string key = IconKey(path, isDirectory, exact, out _);
+        lock (IconCache)
+            return IconCache.TryGetValue(key, out icon);
+    }
+
+    public static ImageSource? GetIcon(string path, bool isDirectory, bool exact = false)
+    {
+        string key = IconKey(path, isDirectory, exact, out bool perFile);
         lock (IconCache)
         {
             if (IconCache.TryGetValue(key, out var cached))
                 return cached;
         }
+        string ext = isDirectory ? "" : Path.GetExtension(path);
 
         uint flags = SHGFI_ICON | SHGFI_SMALLICON;
         uint attributes = 0;
@@ -129,14 +143,18 @@ internal static class ShellInfo
         }
     }
 
+    /// <summary>The type name if it is already cached; never asks the shell.</summary>
+    public static bool TryGetCachedTypeName(string extension, bool isDirectory, out string? name)
+    {
+        lock (TypeCache)
+            return TypeCache.TryGetValue(isDirectory ? "<folder>" : extension, out name);
+    }
+
     public static string GetTypeName(string extension, bool isDirectory)
     {
+        if (TryGetCachedTypeName(extension, isDirectory, out var cached))
+            return cached!;
         string key = isDirectory ? "<folder>" : extension;
-        lock (TypeCache)
-        {
-            if (TypeCache.TryGetValue(key, out var cached))
-                return cached;
-        }
 
         var info = new SHFILEINFO();
         SHGetFileInfo(isDirectory ? "folder" : "file" + extension,
@@ -151,25 +169,64 @@ internal static class ShellInfo
         return name;
     }
 
+    /// <summary>Caches the type names of <paramref name="items"/> (one shell call per extension) on a background thread.</summary>
+    public static Task PrefetchTypeNamesAsync(IReadOnlyList<(string Path, bool IsDirectory, bool ExactIcon, string Extension)> items,
+        CancellationToken token = default) =>
+        RunOnStaThread(() => FetchTypeNames(items, token));
+
     /// <summary>
-    /// Fetches the icon and type name of every item on a background STA thread (the shell's icon handlers
-    /// need one), so the list then reads them straight from the cache.
+    /// Fetches the type name and icon of every item on a background STA thread (the shell's icon handlers
+    /// need one), so the list then reads them straight from the cache. Type names come first, then icons in
+    /// the order given, so the caller can put the rows on screen first and fill them in top-down.
+    /// <paramref name="iconsReady"/> gets how many items, counted from the start, now have their icon cached:
+    /// 0 once every type name is cached, then in batches. Cancelling stops the thread between items.
     /// </summary>
-    public static Task PrefetchAsync(IReadOnlyList<(string Path, bool IsDirectory, bool ExactIcon, string Extension)> items)
+    public static Task PrefetchAsync(IReadOnlyList<(string Path, bool IsDirectory, bool ExactIcon, string Extension)> items,
+        IProgress<int>? iconsReady = null, CancellationToken token = default) =>
+        RunOnStaThread(() =>
+        {
+            if (!FetchTypeNames(items, token))
+                return;
+            iconsReady?.Report(0);
+            long lastReport = Environment.TickCount64;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (token.IsCancellationRequested)
+                    return;
+                var (path, isDirectory, exactIcon, _) = items[i];
+                GetIcon(path, isDirectory, exactIcon);
+                // Batched so a folder of thousands doesn't flood the UI thread with one post per row.
+                if (Environment.TickCount64 - lastReport >= ReportIntervalMs && i + 1 < items.Count)
+                {
+                    iconsReady?.Report(i + 1);
+                    lastReport = Environment.TickCount64;
+                }
+            }
+            iconsReady?.Report(items.Count);
+        });
+
+    const int ReportIntervalMs = 50;
+
+    /// <returns>False if cancelled.</returns>
+    static bool FetchTypeNames(IReadOnlyList<(string Path, bool IsDirectory, bool ExactIcon, string Extension)> items, CancellationToken token)
+    {
+        foreach (var (_, isDirectory, _, extension) in items)
+        {
+            if (token.IsCancellationRequested)
+                return false;
+            GetTypeName(extension, isDirectory);
+        }
+        return true;
+    }
+
+    static Task RunOnStaThread(Action work)
     {
         var done = new TaskCompletionSource();
         var thread = new Thread(() =>
         {
-            try
-            {
-                foreach (var (path, isDirectory, exactIcon, extension) in items)
-                {
-                    GetIcon(path, isDirectory, exactIcon);
-                    GetTypeName(extension, isDirectory);
-                }
-            }
-            catch { }
-            done.SetResult();
+            try { work(); }
+            catch (Exception ex) { Perf.Log("shell prefetch stopped: " + ex.GetType().Name); }   // the caller falls back per row
+            finally { done.SetResult(); }
         })
         {
             IsBackground = true,

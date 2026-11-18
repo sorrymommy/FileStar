@@ -113,7 +113,7 @@ public partial class MainWindow : Window
             _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
             {
                 var sampleFile = _vm.FileList.AllItems.FirstOrDefault(i => !i.IsDirectory)?.FullPath ?? Environment.ProcessPath;
-                ShellContextMenu.PrewarmInBackground(sampleFile,
+                _ = ShellMenus.PrewarmAsync(sampleFile,
                     _vm.InVirtual ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) : _vm.ActiveTab.FullPath);
             });
             await _vm.OnLoadedAsync();
@@ -337,7 +337,7 @@ public partial class MainWindow : Window
         var next = panes[((current < 0 ? (forward ? -1 : 0) : current) + (forward ? 1 : panes.Count - 1)) % panes.Count];
         if (next == FileList)
             MoveFocus(ViewModels.FocusTarget.FileList);
-        else if (next == FolderTree && _vm.Tree.Selected != null)
+        else if (next == FolderTree && _vm.Tree.PathChain.Count > 0)
         {
             FolderTree.Focus();
             BringTreeChainIntoView(_vm.Tree.PathChain);

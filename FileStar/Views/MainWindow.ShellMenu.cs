@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -10,7 +11,30 @@ namespace FileStar.Views;
 public partial class MainWindow
 {
     readonly DispatcherTimer _windowsMenuHover = new() { Interval = TimeSpan.FromMilliseconds(200) };
-    ShellContextMenu.PreparedMenu? _preparedShellMenu;
+    ShellMenuThread? _shellMenus;
+    (ShellMenuRequest For, Task<ShellContextMenu.PreparedMenu> Menu)? _preparedShellMenu;
+
+    /// <summary>Which Windows menu: for items, or for the background of the folder <c>Paths[0]</c>.</summary>
+    sealed record ShellMenuRequest(IReadOnlyList<string> Paths, bool Background, bool Extended)
+    {
+        public bool SameAs(ShellMenuRequest other) =>
+            Background == other.Background && Extended == other.Extended &&
+            Paths.SequenceEqual(other.Paths, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Started with the window's first Windows menu (the start-up prewarm) and ended with the window.</summary>
+    ShellMenuThread ShellMenus
+    {
+        get
+        {
+            if (_shellMenus == null)
+            {
+                var thread = _shellMenus = new ShellMenuThread();
+                Closed += (_, _) => thread.Dispose();
+            }
+            return _shellMenus;
+        }
+    }
 
     /// <summary>An icon-font glyph whose color follows the theme.</summary>
     TextBlock ThemedGlyph(string glyph, string brushKey, double size) =>
@@ -76,39 +100,34 @@ public partial class MainWindow
     }
 
     // ── Building the Windows menu ahead of time ──
-    // Building it is the slow part (~0.3 s: every installed extension adds items). While FileStar's own menu is
-    // open, the user still has to move to "탐색기 메뉴", so it is built then and shown instantly on arrival.
+    // Building it is the slow part (0.4–2 s: every installed extension adds items). While FileStar's own menu is
+    // open, the user still has to move to "탐색기 메뉴", so it is built then, on the shell menu thread so FileStar's
+    // menu keeps responding, and shown without waiting on arrival.
 
     void PrepareShellMenu(IReadOnlyList<string>? paths)
     {
         DiscardPreparedShellMenu();
         if (paths is not { Count: > 0 } && _vm.InVirtual)
             return;
-        try
-        {
-            _preparedShellMenu = paths is { Count: > 0 }
-                ? ShellContextMenu.PrepareForItems(this, paths, extended: false)
-                : ShellContextMenu.PrepareForFolderBackground(this, _vm.ActiveTab.FullPath, extended: false);
-        }
-        catch
-        {
-            _preparedShellMenu = null;   // it will simply be built on demand
-        }
+        var request = paths is { Count: > 0 }
+            ? new ShellMenuRequest(paths, Background: false, Extended: false)
+            : new ShellMenuRequest(new[] { _vm.ActiveTab.FullPath }, Background: true, Extended: false);
+        _preparedShellMenu = (request, ShellMenus.PrepareAsync(WindowHandle, request.Paths, request.Background, request.Extended));
     }
 
     void DiscardPreparedShellMenu()
     {
-        _preparedShellMenu?.Dispose();
+        if (_preparedShellMenu is { } prepared)
+            ShellMenus.Release(prepared.Menu);
         _preparedShellMenu = null;
     }
 
-    ShellContextMenu.PreparedMenu? TakePreparedShellMenu(IReadOnlyList<string> paths, bool background, bool extended)
+    Task<ShellContextMenu.PreparedMenu>? TakePreparedShellMenu(ShellMenuRequest request)
     {
-        var prepared = _preparedShellMenu;
-        if (prepared == null || !prepared.Matches(paths, background, extended))
+        if (_preparedShellMenu is not { } prepared || !prepared.For.SameAs(request))
             return null;
         _preparedShellMenu = null;
-        return prepared;
+        return prepared.Menu;
     }
 
     void FileListMenu_Opened(object sender, RoutedEventArgs e)
@@ -126,35 +145,51 @@ public partial class MainWindow
         // Lower priority than the Windows-menu open request, so a menu that is about to be used survives.
         Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, DiscardPreparedShellMenu);
 
-    void ShowWindowsMenu(IReadOnlyList<string> paths, Point screenPoint, bool extended)
-    {
-        try
-        {
-            if (TakePreparedShellMenu(paths, background: false, extended) is { } prepared)
-                ShellContextMenu.Show(this, prepared, screenPoint, _vm.HandleShellVerb);
-            else
-                ShellContextMenu.ShowForItems(this, paths, screenPoint, extended, _vm.HandleShellVerb);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, "탐색기 메뉴를 열 수 없습니다: " + ex.Message, AppPaths.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-    }
+    void ShowWindowsMenu(IReadOnlyList<string> paths, Point screenPoint, bool extended) =>
+        _ = ShowShellMenuAsync(new ShellMenuRequest(paths, Background: false, extended), screenPoint, _vm.HandleShellVerb);
 
     void ShowWindowsBackgroundMenu(Point screenPoint, bool extended)
     {
         if (_vm.InVirtual)
             return;   // 내 PC and result lists are not folders; they have no background menu of their own
+        _ = ShowShellMenuAsync(new ShellMenuRequest(new[] { _vm.ActiveTab.FullPath }, Background: true, extended), screenPoint, null);
+    }
+
+    IntPtr WindowHandle => new WindowInteropHelper(this).Handle;
+
+    async Task ShowShellMenuAsync(ShellMenuRequest request, Point screenPoint, ShellContextMenu.VerbHandler? handleVerb)
+    {
         try
         {
-            if (TakePreparedShellMenu(new[] { _vm.ActiveTab.FullPath }, background: true, extended) is { } prepared)
-                ShellContextMenu.Show(this, prepared, screenPoint, null);
-            else
-                ShellContextMenu.ShowForFolderBackground(this, _vm.ActiveTab.FullPath, screenPoint, extended);
+            var menu = TakePreparedShellMenu(request) ?? ShellMenus.PrepareAsync(WindowHandle, request.Paths, request.Background, request.Extended);
+            var shown = ShellMenus.ShowAsync(menu, WindowHandle, screenPoint, handleVerb);
+            if (!menu.IsCompleted)
+                await ShowBusyUntil(menu);
+            await shown;
+        }
+        catch (OperationCanceledException)
+        {
+            // The window closed while the menu was being built.
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, "탐색기 메뉴를 열 수 없습니다: " + ex.Message, AppPaths.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
+            Perf.Log("shell menu: " + ex);
+            if (IsLoaded)
+                MessageBox.Show(this, "탐색기 메뉴를 열 수 없습니다: " + ex.Message, AppPaths.AppName, MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    /// <summary>The "working in the background" pointer while a menu is still being built on demand.</summary>
+    async Task ShowBusyUntil(Task building)
+    {
+        Mouse.OverrideCursor = Cursors.AppStarting;
+        try
+        {
+            await Task.WhenAny(building);
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
         }
     }
 }

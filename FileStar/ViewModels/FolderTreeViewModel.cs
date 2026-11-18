@@ -6,6 +6,7 @@ namespace FileStar.ViewModels;
 /// <summary>
 /// The folder tree: 즐겨찾기, 내 PC (drives) and 태그. Follows the location being shown — expanding down to it,
 /// selecting it and drawing the red path line — and stays inside a 즐겨찾기 branch while browsing below a favorite.
+/// A location it doesn't list (inside a hidden folder, say) gets the path line as far as it goes, with nothing selected.
 /// </summary>
 public sealed class FolderTreeViewModel : ObservableObject
 {
@@ -21,6 +22,7 @@ public sealed class FolderTreeViewModel : ObservableObject
         _context = context;
         _favorites = favorites;
         _notes = notes;
+        _context.ChildrenUpdated += OnChildrenUpdated;
     }
 
     /// <summary>The user picked a node: show this location.</summary>
@@ -35,7 +37,7 @@ public sealed class FolderTreeViewModel : ObservableObject
 
     public FolderNode? FavoritesNode => _favoritesNode;
 
-    /// <summary>The nodes from the root down to the location shown.</summary>
+    /// <summary>The nodes from the root down to the location shown, as far as the tree lists it.</summary>
     public IReadOnlyList<FolderNode> PathChain => _pathChain;
 
     /// <summary>The favorite folder the current location was reached through (the tree stays in 즐겨찾기), or null.</summary>
@@ -98,7 +100,7 @@ public sealed class FolderTreeViewModel : ObservableObject
 
     public void ClearAnchor() => FavoriteAnchor = null;
 
-    /// <summary>Expands the tree down to <paramref name="path"/> and selects it.</summary>
+    /// <summary>Expands the tree down to <paramref name="path"/> and selects it, if the tree lists it.</summary>
     public void Sync(string path)
     {
         if (_pcNode == null)
@@ -122,12 +124,7 @@ public sealed class FolderTreeViewModel : ObservableObject
                 SelectPath(tagNode, new List<FolderNode> { _tagsNode, tagNode });
             }
             else
-            {
-                if (_selected != null)
-                    _selected.IsSelected = false;
-                _selected = null;
-                MarkPath(new List<FolderNode>());
-            }
+                SelectPath(null, new List<FolderNode>());
             return;
         }
 
@@ -147,7 +144,7 @@ public sealed class FolderTreeViewModel : ObservableObject
         var drive = _pcNode.Children.FirstOrDefault(n => string.Equals(n.FullPath, root, StringComparison.OrdinalIgnoreCase));
         if (drive == null)
         {
-            MarkPath(new List<FolderNode>());
+            SelectPath(null, new List<FolderNode>());
             return;
         }
         _pcNode.IsExpanded = true;
@@ -155,8 +152,11 @@ public sealed class FolderTreeViewModel : ObservableObject
         SelectPath(Descend(drive, path[root.Length..], chain), chain);
     }
 
-    /// <summary>Expands from <paramref name="start"/> along the relative path, appending each node found to <paramref name="chain"/>.</summary>
-    static FolderNode Descend(FolderNode start, string relativePath, List<FolderNode> chain)
+    /// <summary>
+    /// Expands from <paramref name="start"/> along the relative path, appending each node found to
+    /// <paramref name="chain"/>. Returns the last node, or null if the tree doesn't list the whole path.
+    /// </summary>
+    static FolderNode? Descend(FolderNode start, string relativePath, List<FolderNode> chain)
     {
         var node = start;
         foreach (var part in relativePath.Split('\\', StringSplitOptions.RemoveEmptyEntries))
@@ -164,7 +164,7 @@ public sealed class FolderTreeViewModel : ObservableObject
             node.IsExpanded = true;
             var next = node.Children.FirstOrDefault(c => string.Equals(c.Name, part, StringComparison.OrdinalIgnoreCase));
             if (next == null)
-                break;   // e.g. a hidden folder that the tree doesn't list
+                return null;   // e.g. a hidden folder that the tree doesn't list
             node = next;
             chain.Add(node);
         }
@@ -181,12 +181,17 @@ public sealed class FolderTreeViewModel : ObservableObject
             : Walk(_favoritesNode).FirstOrDefault(n => string.Equals(n.FullPath, path, StringComparison.OrdinalIgnoreCase));
     }
 
-    void SelectPath(FolderNode node, List<FolderNode> chain)
+    /// <param name="node">
+    /// Null when the tree doesn't list the location. Never the nearest node instead: the view navigates to what is
+    /// selected, away from the location, and the tree's file commands would act on that other folder.
+    /// </param>
+    void SelectPath(FolderNode? node, List<FolderNode> chain)
     {
         if (_selected != null && _selected != node)
             _selected.IsSelected = false;
         _selected = node;
-        node.IsSelected = true;
+        if (node != null)
+            node.IsSelected = true;
         MarkPath(chain);
         BringIntoViewRequested?.Invoke(chain);
     }
@@ -255,6 +260,44 @@ public sealed class FolderTreeViewModel : ObservableObject
             Sync(location);
     }
 
+    /// <summary>
+    /// A list showing <paramref name="path"/> has just read it: the tree's nodes for that folder (under 내 PC, and
+    /// under 즐겨찾기 if it is a favorite) list the same <paramref name="subfolders"/>, so folders made, deleted or
+    /// renamed there — by FileStar or another program — show in the tree without reloading it.
+    /// Returns true if that took away the selected node or one on the path line: the caller syncs the tree again.
+    /// </summary>
+    public bool UpdateSubfolders(string path, IReadOnlyCollection<string> subfolders)
+    {
+        var target = Path.TrimEndingDirectorySeparator(path);
+        var nodes = Roots.SelectMany(r => r.SelfAndDescendants())
+            .Where(n => n.IsFolder && string.Equals(Path.TrimEndingDirectorySeparator(n.FullPath!), target, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var selected = _selected;
+        // Quietly: if a removed node was selected, the view moves the selection to its parent; that must not navigate.
+        Quietly(() =>
+        {
+            foreach (var node in nodes)
+                node.UpdateChildren(subfolders);
+        });
+        return _selected != selected || _pathChain.Any(n => !InTree(n));
+    }
+
+    bool InTree(FolderNode node) =>
+        node.Parent is { } parent ? parent.Children.Contains(node) && InTree(parent) : Roots.Contains(node);
+
+    /// <summary>
+    /// The location shown isn't in the tree: re-read the folder where the path line stops, in case the location
+    /// was made after that folder was read. Returns whether that brought in new folders (the caller syncs again).
+    /// </summary>
+    public bool RefreshWherePathStops() => _selected == null && _pathChain.LastOrDefault() is { } end && end.RefreshChildren();
+
+    // Children added or removed above the location move the rows the red path line runs past.
+    void OnChildrenUpdated(FolderNode node)
+    {
+        if (_pathChain.Contains(node))
+            MarkPath(new List<FolderNode>(_pathChain));
+    }
+
     /// <summary>Memos changed: redraw every folder's marker.</summary>
     public void RefreshMarks()
     {
@@ -262,13 +305,16 @@ public sealed class FolderTreeViewModel : ObservableObject
             node.RefreshMark();
     }
 
+    // With nothing selected, the node where the path line stops: reloading it may bring the location into the tree.
+    FolderNode? ReloadTarget => _selected ?? _pathChain.LastOrDefault();
+
     /// <summary>Reloads the selected node (and optionally its parent, whose children's names may have changed) without navigating.</summary>
     public void ReloadAround(bool parentToo)
     {
         if (parentToo)
-            Quietly(() => _selected?.Parent?.Reload());
-        _selected?.Reload();
+            Quietly(() => ReloadTarget?.Parent?.Reload());
+        ReloadTarget?.Reload();
     }
 
-    public void ReloadSelected() => _selected?.Reload();
+    public void ReloadSelected() => ReloadTarget?.Reload();
 }

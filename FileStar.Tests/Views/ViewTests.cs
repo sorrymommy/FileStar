@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using FileStar.Tests.Support;
@@ -85,6 +86,23 @@ public sealed class ViewTests : IDisposable
             vm.IsInfoPaneVisible = true;
         });
         Assert.NotEmpty(_t.Settings.Load().Tabs);
+    });
+
+    [Fact]
+    public void A_folder_inside_a_hidden_folder_stays_open() => WpfThread.Run(async () =>
+    {
+        // The tree can't list it; selecting the nearest node instead made the real tree navigate away to that node.
+        File.SetAttributes(_t.Files.Folder("secret"), FileAttributes.Directory | FileAttributes.Hidden);
+        string inner = _t.Files.Folder(@"secret\inner");
+        _t.Files.File(@"secret\inner\kept.txt");
+        var vm = new MainViewModel(_t.Services, new[] { inner });
+        await AssertNoBindingErrors(new MainWindow(vm), async () =>
+        {
+            await Wait.Until(() => vm.FileList.View != null && vm.FileList.LoadingMessage == null, "the list");
+            await WpfThread.Settle(300);
+            Assert.Equal(inner, vm.AddressText);
+            Assert.Equal("kept.txt", vm.FileList.VisibleItems.Single().Name);
+        });
     });
 
     /// <summary>The row's "#" cell, wherever the user moved that column.</summary>

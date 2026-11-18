@@ -74,11 +74,25 @@ public sealed class FakeUpdates : IUpdateService
 /// <summary>Never fires: tests reload explicitly.</summary>
 public sealed class FakeWatch : IFolderWatchService
 {
-    public IDisposable Watch(string folder, Action changed, Action<string, string>? renamed = null) => new Nothing();
+    readonly List<(string Folder, Action Changed)> _watching = new();
 
-    sealed class Nothing : IDisposable
+    public IDisposable Watch(string folder, Action changed, Action<string, string>? renamed = null)
     {
-        public void Dispose() { }
+        var entry = (folder, changed);
+        _watching.Add(entry);
+        return new Stop(() => _watching.Remove(entry));
+    }
+
+    /// <summary>Reports a change in <paramref name="folder"/>, as the real watcher does once changes settle.</summary>
+    public void Changed(string folder)
+    {
+        foreach (var (_, changed) in _watching.Where(w => string.Equals(w.Folder, folder, StringComparison.OrdinalIgnoreCase)).ToList())
+            changed();
+    }
+
+    sealed class Stop(Action stop) : IDisposable
+    {
+        public void Dispose() => stop();
     }
 }
 
@@ -176,7 +190,7 @@ public sealed class TestServices : IDisposable
         // Empty, not the first-run defaults: those are the real user's Desktop, Documents and Downloads.
         Favorites = JsonFavoritesStore.Load(Data.File("favorites.json", "[]"));
         Settings = new JsonSettingsStore(Data.Combine("settings.json"));
-        Services = new AppServices(Notes, Favorites, Settings, Recent, Undo, FileOps, FileSystem, new FakeWatch(), Dialogs, Windows, Shell,
+        Services = new AppServices(Notes, Favorites, Settings, Recent, Undo, FileOps, FileSystem, Watch, Dialogs, Windows, Shell,
             new FakeTheme(), new FakeUpdates(), new JsonAiSettingsStore(Data.Combine("ai.json")));
     }
 
@@ -189,6 +203,7 @@ public sealed class TestServices : IDisposable
     public JsonSettingsStore Settings { get; }
     public RecentItems Recent { get; } = new();
     public LocalFileSystem FileSystem { get; } = new();
+    public FakeWatch Watch { get; } = new();
     public FakeDialogs Dialogs { get; } = new();
     public FakeWindows Windows { get; } = new();
     public FakeShell Shell { get; } = new();

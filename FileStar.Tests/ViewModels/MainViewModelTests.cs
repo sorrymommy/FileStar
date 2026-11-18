@@ -51,6 +51,63 @@ public sealed class MainViewModelTests : IDisposable
     });
 
     [Fact]
+    public void A_folder_the_tree_does_not_list_selects_no_node_but_marks_the_way() => WpfThread.Run(async () =>
+    {
+        File.SetAttributes(_t.Files.Folder("secret"), FileAttributes.Directory | FileAttributes.Hidden);
+        string inner = _t.Files.Folder(@"secret\inner");
+
+        var vm = await StartAsync(inner);
+
+        Assert.Null(vm.Tree.Selected);
+        Assert.DoesNotContain(vm.Tree.Roots.SelectMany(r => r.SelfAndDescendants()), n => n.IsSelected);
+        Assert.Equal(inner, vm.AddressText);
+
+        // The path line ends at the nearest folder the tree lists (above the test's folder if %TEMP% is under a
+        // hidden AppData), and going there is still one click away.
+        var nearest = vm.Tree.PathChain[^1];
+        Assert.NotEqual(inner, nearest.FullPath);
+        Assert.True(Locations.IsSameOrUnder(inner, nearest.FullPath!));
+        vm.Tree.OnSelected(nearest);
+        await Loaded(vm);
+        Assert.Equal(nearest.FullPath, vm.AddressText);
+    });
+
+    [Fact]
+    public void A_folder_made_after_its_parent_was_read_is_selected_when_navigated_to() => WpfThread.Run(async () =>
+    {
+        var vm = await StartAsync();
+        vm.ShowHidden = true;   // so the whole path is listed even if %TEMP% is under a hidden AppData
+        await Loaded(vm);
+        string alpha = _t.Files.Combine("Alpha");
+        vm.Navigate(alpha);
+        await Loaded(vm);
+        var alphaNode = vm.Tree.Selected!;
+        Assert.Equal(alpha, alphaNode.FullPath);
+
+        string added = _t.Files.Folder(@"Alpha\Added");   // the tree has already read Alpha's subfolders
+        vm.Navigate(added);
+        await Loaded(vm);
+        Assert.Equal(added, vm.Tree.Selected?.FullPath);   // no manual refresh needed
+        Assert.False(alphaNode.IsSelected);
+        Assert.Same(vm.Tree.Selected, vm.Tree.PathChain[^1]);
+    });
+
+    [Fact]
+    public void A_drive_the_tree_does_not_list_clears_the_selection() => WpfThread.Run(async () =>
+    {
+        var vm = await StartAsync();
+        vm.ShowHidden = true;
+        await Loaded(vm);
+        Assert.NotNull(vm.Tree.Selected);
+
+        vm.Tree.Sync(@"\\server\share");
+
+        Assert.Null(vm.Tree.Selected);
+        Assert.Empty(vm.Tree.PathChain);
+        Assert.DoesNotContain(vm.Tree.Roots.SelectMany(r => r.SelfAndDescendants()), n => n.IsSelected);
+    });
+
+    [Fact]
     public void Back_forward_and_up_move_through_the_history() => WpfThread.Run(async () =>
     {
         var vm = await StartAsync();

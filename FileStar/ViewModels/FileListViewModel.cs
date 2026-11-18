@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using System.Windows.Data;
 
 namespace FileStar.ViewModels;
@@ -40,6 +41,9 @@ public sealed class FileListViewModel : ObservableObject
 
     /// <summary>The selection the view reported changed.</summary>
     public event Action? SelectionChanged;
+
+    /// <summary>Some rows' icons or type names arrived after the rows were shown.</summary>
+    public event Action? ShellInfoUpdated;
 
     /// <summary>What the list shows (sorted and filtered); null before the first load or when the folder can't be read.</summary>
     public ICollectionView? View
@@ -199,8 +203,9 @@ public sealed class FileListViewModel : ObservableObject
             items = await Task.Run(() => Locations.IsThisPc(path)
                 ? ThisPcItems.Build()
                 : _files.GetEntries(path).Select(FileItem.From).OfType<FileItem>().ToList(), token);
-            // Icons and type names off the UI thread, so drawing the list doesn't stall on the shell.
-            await ShellInfo.PrefetchAsync(items.Select(i => i.ShellKey).ToList());
+            // Sorting by type needs every type name up front; they cost one shell call per extension, not per file.
+            if (_sortKey == "Type")
+                await ShellInfo.PrefetchTypeNamesAsync(items.Select(i => i.ShellKey).ToList(), token);
         }
         catch (Exception ex)
         {
@@ -214,11 +219,49 @@ public sealed class FileListViewModel : ObservableObject
         if (token.IsCancellationRequested)
             return false;
         foreach (var item in items)
+        {
             item.ApplyNotes(_notes);
+            item.DeferShellInfo();
+        }
         ShowItems(items);
         IsEmpty = items.Count == 0;
         LoadingMessage = null;
+        _ = FillShellInfoAsync(path, token);
         return true;
+    }
+
+    /// <summary>
+    /// Fetches the rows' icons and type names off the UI thread after the rows are on screen, top rows first.
+    /// The list must not wait for them: a folder with hundreds of .exe files takes seconds, as each has its own icon.
+    /// </summary>
+    async Task FillShellInfoAsync(string path, CancellationToken token)
+    {
+        var rows = VisibleItems.ToList();   // display order: what is on screen gets its icons first
+        if (rows.Count < AllItems.Count())
+            rows.AddRange(AllItems.Except(rows));
+        int arrived = 0;
+        bool typesArrived = false;
+        long started = Perf.Now;
+
+        void Arrive(int ready)
+        {
+            if (token.IsCancellationRequested || ready <= arrived && typesArrived)
+                return;
+            if (!typesArrived)
+            {
+                typesArrived = true;
+                foreach (var row in rows)
+                    row.TypeNameArrived();
+            }
+            for (; arrived < ready; arrived++)
+                rows[arrived].ShellInfoArrived();
+            ShellInfoUpdated?.Invoke();
+        }
+
+        await ShellInfo.PrefetchAsync(rows.Select(r => r.ShellKey).ToList(), new Progress<int>(Arrive), token);
+        // Also when the shell failed partway: the rows it didn't reach then fetch their own, instead of staying blank.
+        Arrive(rows.Count);
+        Perf.Log($"icons {Path.GetFileName(path)}: {Perf.Now - started} ms ({rows.Count} rows)");
     }
 
     /// <summary>

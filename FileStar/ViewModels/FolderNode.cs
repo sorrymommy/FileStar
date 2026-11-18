@@ -10,6 +10,11 @@ public sealed class FolderTreeContext(IFileSystem files, INotesStore notes)
 {
     public IFileSystem Files => files;
 
+    /// <summary>A loaded node's children were brought up to date (added, removed or reordered).</summary>
+    public event Action<FolderNode>? ChildrenUpdated;
+
+    internal void OnChildrenUpdated(FolderNode node) => ChildrenUpdated?.Invoke(node);
+
     public NoteMark MarkFor(string path) =>
         notes.Get(path) != null ? NoteMark.Memo : notes.FolderHasNotes(path) ? NoteMark.InsideFolder : NoteMark.None;
 }
@@ -116,6 +121,8 @@ public sealed class FolderNode : ObservableObject
                 return;
             if (IsFavoriteGroup)
                 Favorite!.IsExpanded = value;   // remembered in favorites.json
+            else if (value && _loaded)
+                RefreshChildren();   // opened again: folders may have come and gone since
             else if (value)
                 LoadChildren();
         }
@@ -236,6 +243,56 @@ public sealed class FolderNode : ObservableObject
             else
                 _loaded = true;
         }
+    }
+
+    /// <summary>
+    /// Re-reads the subfolders and updates the children to match (see <see cref="UpdateChildren(IEnumerable{string})"/>).
+    /// A folder that can't be read just now (a network drive dropping out) keeps its children.
+    /// </summary>
+    public bool RefreshChildren() =>
+        IsFolder && _context?.Files.TryGetSubfolders(FullPath!) is { } subfolders && UpdateChildren(subfolders.Select(d => d.Name));
+
+    /// <summary>
+    /// Brings the children in line with <paramref name="subfolders"/> (the folder's subfolder names now), keeping the
+    /// nodes that are still there — and what is expanded below them — rather than reloading. Children not loaded
+    /// yet stay that way; only whether the node can be expanded is updated. Returns whether anything changed.
+    /// </summary>
+    public bool UpdateChildren(IEnumerable<string> subfolders)
+    {
+        if (!IsFolder || _context == null)
+            return false;
+        var names = subfolders.ToList();
+        if (!_loaded)
+        {
+            // Unopened, it holds just the expander placeholder.
+            if (names.Count > 0)
+                return false;
+            Children.Clear();
+            _loaded = true;
+            return true;
+        }
+        names.Sort(Native.StrCmpLogicalW);   // the order GetSubfolders gives
+        // Matched by exact name, so a change of case alone (a → A) shows the new name.
+        var existing = Children.Where(c => c.FullPath != null).ToDictionary(c => c.Name, StringComparer.Ordinal);
+        var wanted = names.Select(n => existing.TryGetValue(n, out var node) ? node : Folder(_context, Path.Join(FullPath, n), n)).ToList();
+        if (wanted.SequenceEqual(Children))
+            return false;
+        var keep = wanted.ToHashSet();
+        for (int i = Children.Count - 1; i >= 0; i--)
+            if (!keep.Contains(Children[i]))
+                Children.RemoveAt(i);
+        for (int i = 0; i < wanted.Count; i++)
+        {
+            if (i < Children.Count && Children[i] == wanted[i])
+                continue;
+            int at = Children.IndexOf(wanted[i]);
+            if (at >= 0)
+                Children.Move(at, i);
+            else
+                Children.Insert(i, wanted[i]);
+        }
+        _context.OnChildrenUpdated(this);
+        return true;
     }
 
     void LoadChildren()

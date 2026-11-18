@@ -9,6 +9,7 @@ namespace FileStar.Platform;
 /// <summary>
 /// Shows the real Windows Explorer right-click menu (including items added by installed programs, such as
 /// compression tools, antivirus scans or OneDrive sharing) for files/folders, or for a folder's empty background.
+/// A menu must be built, shown and invoked on one STA thread: <see cref="ShellMenuThread"/> does that off the UI thread.
 /// </summary>
 public static class ShellContextMenu
 {
@@ -25,6 +26,7 @@ public static class ShellContextMenu
     /// <summary>
     /// A built but not yet shown menu. Building is the slow part (every shell extension adds its items), so it
     /// can be done ahead of time — e.g. while FileStar's own menu is open — and shown instantly later.
+    /// Belongs to the thread that built it.
     /// </summary>
     public sealed class PreparedMenu : IDisposable
     {
@@ -44,10 +46,6 @@ public static class ShellContextMenu
         public bool IsBackground { get; }
         public bool Extended { get; }
 
-        public bool Matches(IReadOnlyList<string> paths, bool background, bool extended) =>
-            Menu != null && IsBackground == background && Extended == extended &&
-            Paths.SequenceEqual(paths, StringComparer.OrdinalIgnoreCase);
-
         public void Dispose()
         {
             if (HMenu != IntPtr.Zero)
@@ -59,11 +57,13 @@ public static class ShellContextMenu
         }
     }
 
-    public static PreparedMenu PrepareForItems(Window owner, IReadOnlyList<string> paths, bool extended) =>
-        Prepare(CreateForItems(new WindowInteropHelper(owner).Handle, paths), paths, background: false, extended);
-
-    public static PreparedMenu PrepareForFolderBackground(Window owner, string folderPath, bool extended) =>
-        Prepare(CreateForFolderBackground(new WindowInteropHelper(owner).Handle, folderPath), new[] { folderPath }, background: true, extended);
+    /// <summary>Builds the menu for <paramref name="paths"/> (all in one folder), or for the background of the folder <c>paths[0]</c>.</summary>
+    internal static PreparedMenu Prepare(IntPtr hwnd, IReadOnlyList<string> paths, bool background, bool extended)
+    {
+        if (paths.Count == 0)
+            throw new ArgumentException("No items for the menu.", nameof(paths));
+        return Prepare(background ? CreateForFolderBackground(hwnd, paths[0]) : CreateForItems(hwnd, paths), paths, background, extended);
+    }
 
     static PreparedMenu Prepare(IContextMenu menu, IReadOnlyList<string> paths, bool background, bool extended)
     {
@@ -133,43 +133,23 @@ public static class ShellContextMenu
         }
     }
 
-    /// <summary>Menu for the given items (all in the same folder).</summary>
-    public static void ShowForItems(Window owner, IReadOnlyList<string> paths, Point screenPoint, bool extended, VerbHandler? handleVerb = null)
-    {
-        if (paths.Count > 0)
-            Show(owner, PrepareForItems(owner, paths, extended), screenPoint, handleVerb);
-    }
-
-    /// <summary>Menu for a folder's empty background ("새로 만들기", "붙여넣기", …).</summary>
-    public static void ShowForFolderBackground(Window owner, string folderPath, Point screenPoint, bool extended) =>
-        Show(owner, PrepareForFolderBackground(owner, folderPath, extended), screenPoint, null);
-
     /// <summary>
-    /// Builds (but never shows) the menus once on a background thread. The first menu of a session is slow
-    /// (~1.5 s here) because every installed shell extension's DLL loads then; afterwards the DLLs stay
-    /// loaded in the process, so the first menu the user opens appears as fast as later ones.
+    /// Builds (but never shows) the menus once. The first menu on a thread is slow (~1.5 s here) because every
+    /// installed shell extension's DLL loads and initializes then; afterwards the user's first menu is as fast as later ones.
     /// </summary>
-    public static void PrewarmInBackground(string? samplePath, string folderPath)
+    internal static void Prewarm(string? samplePath, string folderPath)
     {
-        var thread = new Thread(() =>
+        try
         {
-            try
-            {
-                if (samplePath != null)
-                    BuildAndDiscard(CreateForItems(IntPtr.Zero, new[] { samplePath }));
-                BuildAndDiscard(CreateForFolderBackground(IntPtr.Zero, folderPath));
-            }
-            catch
-            {
-                // Best effort: if it fails the real menu is just slower the first time.
-            }
-        })
+            if (samplePath != null)
+                BuildAndDiscard(CreateForItems(IntPtr.Zero, new[] { samplePath }));
+            BuildAndDiscard(CreateForFolderBackground(IntPtr.Zero, folderPath));
+        }
+        catch (Exception ex)
         {
-            IsBackground = true,
-            Priority = ThreadPriority.BelowNormal,
-        };
-        thread.SetApartmentState(ApartmentState.STA);   // shell extensions are apartment-threaded COM objects
-        thread.Start();
+            // Best effort: if it fails the real menu is just slower the first time.
+            Perf.Log("shell menu prewarm failed: " + ex.GetType().Name);
+        }
     }
 
     static void BuildAndDiscard(IContextMenu menu)
@@ -241,14 +221,19 @@ public static class ShellContextMenu
         }
     }
 
-    /// <summary>Shows a prepared menu, runs the chosen command, and disposes the menu.</summary>
-    public static void Show(Window owner, PreparedMenu prepared, Point screenPoint, VerbHandler? handleVerb)
+    /// <summary>
+    /// The command picked from a menu: its position, its verb ("rename", "delete", …) if it has one, and whether
+    /// Shift or Ctrl was held as it was picked (Shift+삭제 deletes permanently).
+    /// </summary>
+    internal readonly record struct Choice(int Offset, string Verb, bool Shift, bool Control);
+
+    /// <summary>
+    /// Shows a prepared menu owned by <paramref name="owner"/> (a window of the calling thread, which built the menu)
+    /// and returns what was picked, or null if it was dismissed.
+    /// </summary>
+    internal static Choice? Track(PreparedMenu prepared, HwndSource owner, Point screenPoint)
     {
         var menu = prepared.Menu ?? throw new ObjectDisposedException(nameof(PreparedMenu));
-        IntPtr hMenu = prepared.HMenu;
-        var paths = prepared.Paths;
-        var hwnd = new WindowInteropHelper(owner).Handle;
-        var source = HwndSource.FromHwnd(hwnd);
         // "보내기", "연결 프로그램" and owner-drawn items fill themselves in through these window messages.
         HwndSourceHook hook = (IntPtr h, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) =>
         {
@@ -270,40 +255,41 @@ public static class ShellContextMenu
             }
             return IntPtr.Zero;
         };
+        owner.AddHook(hook);
         try
         {
-            source.AddHook(hook);
-            uint command = TrackPopupMenuEx(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
-                (int)screenPoint.X, (int)screenPoint.Y, hwnd, IntPtr.Zero);
-            source.RemoveHook(hook);
+            uint command = TrackPopupMenuEx(prepared.HMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                (int)screenPoint.X, (int)screenPoint.Y, owner.Handle, IntPtr.Zero);
             if (command < FirstCommand)
-                return;
-
+                return null;
             int offset = (int)command - FirstCommand;
-            string verb = GetVerb(menu, offset);
-            if (verb.Length > 0 && handleVerb?.Invoke(verb, paths) == true)
-                return;
-
-            var info = new CMINVOKECOMMANDINFOEX
-            {
-                cbSize = Marshal.SizeOf<CMINVOKECOMMANDINFOEX>(),
-                fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE |
-                        (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift) ? CMIC_MASK_SHIFT_DOWN : 0) |
-                        (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Control) ? CMIC_MASK_CONTROL_DOWN : 0),
-                hwnd = hwnd,
-                lpVerb = (IntPtr)offset,
-                lpVerbW = (IntPtr)offset,
-                lpDirectoryW = Path.GetDirectoryName(paths[0]),
-                nShow = 1,   // SW_SHOWNORMAL
-                ptInvoke = new POINT { X = (int)screenPoint.X, Y = (int)screenPoint.Y },
-            };
-            menu.InvokeCommand(ref info);
+            return new Choice(offset, GetVerb(menu, offset), IsKeyDown(VK_SHIFT), IsKeyDown(VK_CONTROL));
         }
         finally
         {
-            source.RemoveHook(hook);
-            prepared.Dispose();
+            owner.RemoveHook(hook);
         }
+    }
+
+    /// <summary>Runs the command picked from <paramref name="prepared"/>, on the thread that built it.</summary>
+    /// <param name="hwnd">The window the command's own dialogs belong to.</param>
+    internal static void Invoke(PreparedMenu prepared, int offset, IntPtr hwnd, Point screenPoint, bool shift, bool control)
+    {
+        var menu = prepared.Menu ?? throw new ObjectDisposedException(nameof(PreparedMenu));
+        var info = new CMINVOKECOMMANDINFOEX
+        {
+            cbSize = Marshal.SizeOf<CMINVOKECOMMANDINFOEX>(),
+            fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE |
+                    (shift ? CMIC_MASK_SHIFT_DOWN : 0) |
+                    (control ? CMIC_MASK_CONTROL_DOWN : 0),
+            hwnd = hwnd,
+            lpVerb = (IntPtr)offset,
+            lpVerbW = (IntPtr)offset,
+            lpDirectoryW = Path.GetDirectoryName(prepared.Paths[0]),
+            nShow = 1,   // SW_SHOWNORMAL
+            ptInvoke = new POINT { X = (int)screenPoint.X, Y = (int)screenPoint.Y },
+        };
+        menu.InvokeCommand(ref info);
     }
 
     static string GetVerb(IContextMenu menu, int offset)
@@ -318,6 +304,14 @@ public static class ShellContextMenu
             return "";
         }
     }
+
+    // The key state as of the last input this thread read: the click or Enter that picked the command.
+    static bool IsKeyDown(int key) => (GetKeyState(key) & 0x8000) != 0;
+
+    const int VK_SHIFT = 0x10, VK_CONTROL = 0x11;
+
+    [DllImport("user32.dll")]
+    static extern short GetKeyState(int key);
 
     /// <summary>Current mouse position in screen pixels (what TrackPopupMenuEx expects).</summary>
     public static Point CursorPosition() => GetCursorPos(out var p) ? new Point(p.X, p.Y) : new Point();
