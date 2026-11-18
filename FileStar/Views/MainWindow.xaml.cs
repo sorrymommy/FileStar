@@ -18,6 +18,7 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _detailsTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
     readonly DispatcherTimer _saveTimer = new() { Interval = TimeSpan.FromSeconds(1.5) };
     readonly DispatcherTimer _periodicSave = new() { Interval = TimeSpan.FromSeconds(20) };
+    bool _altShortcutRan;
 
     public MainWindow(MainViewModel vm)
     {
@@ -191,6 +192,12 @@ public partial class MainWindow : Window
     void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.LeftAlt or Key.RightAlt)
+        {
+            if (!e.IsRepeat)
+                _altShortcutRan = false;   // a fresh Alt: releasing it alone should still open the menu bar
+            return;
+        }
         var mods = Keyboard.Modifiers;
         bool none = mods == ModifierKeys.None;
         bool ctrl = mods == ModifierKeys.Control;
@@ -202,7 +209,10 @@ public partial class MainWindow : Window
         // The second pane handles its own list keys (Backspace, Del, F2, F5, Ctrl+A/C/X/V, Alt+↑).
         if (DualPane.HasFocus && (key is Key.Back or Key.Delete or Key.F2 or Key.F5 || ctrl && key is Key.A or Key.C or Key.X or Key.V ||
                                   alt && key == Key.Up))
+        {
+            _altShortcutRan |= alt;
             return;
+        }
         bool inList = FileList.IsKeyboardFocusWithin && !typing;
 
         // ── Windows Explorer shortcuts ──
@@ -265,6 +275,21 @@ public partial class MainWindow : Window
         }
         else if (ctrl && key is >= Key.D1 and <= Key.D9 && Keyboard.FocusedElement is not TextBox) _vm.OpenFavorite(key - Key.D1);
         else return;
+        e.Handled = true;
+        _altShortcutRan |= mods.HasFlag(ModifierKeys.Alt);
+    }
+
+    /// <summary>
+    /// Swallows the Alt release that ends an Alt shortcut (Alt+D, Alt+←, …). When Alt comes up before the other key,
+    /// WPF enters menu mode, and the menu bar takes the keyboard from where the shortcut put it: after Alt+D the
+    /// address bar still looked selected but Ctrl+C copied nothing. A plain Alt tap still opens the menu bar.
+    /// </summary>
+    void Window_PreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is not (Key.LeftAlt or Key.RightAlt) || !_altShortcutRan)
+            return;
+        _altShortcutRan = false;
         e.Handled = true;
     }
 

@@ -8,7 +8,7 @@
         Title="{Binding Title}" Icon="pack://application:,,,/FileStar;component/FileStar.ico" Width="1400" Height="800"
         FontFamily="Segoe UI, Malgun Gothic" FontSize="12"
         Background="{DynamicResource Th.Window.Bg}" Foreground="{DynamicResource Th.Text}"
-        PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewKeyDown="Window_PreviewKeyDown" PreviewKeyUp="Window_PreviewKeyUp"
         MouseUp="Window_MouseUp"
         Closing="Window_Closing">
     <Window.Resources>
