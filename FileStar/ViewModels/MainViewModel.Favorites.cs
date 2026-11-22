@@ -68,7 +68,9 @@ public sealed partial class MainViewModel
             entries.Add(new MenuItemViewModel
             {
                 Header = fav.Name,
-                Icon = ShellInfo.GetIcon(path, true, exact: true),
+                // From the cache the tree's probe fills (the menu is rebuilt when it has): asking the shell here would
+                // hold up start-up on a slow drive.
+                Icon = ShellInfo.TryGetCachedIcon(path, true, exact: true, out var icon) ? icon : ShellInfo.GetIcon("", true),
                 ToolTip = path,
                 Gesture = shortcut <= 9 ? $"Ctrl+{shortcut}" : "",
                 Command = new RelayCommand(() => NavigateToFavorite(path)),

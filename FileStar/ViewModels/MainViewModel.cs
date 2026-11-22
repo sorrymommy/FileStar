@@ -129,6 +129,7 @@ public sealed partial class MainViewModel : ObservableObject
         Dual.CloseRequested += () => SetDualPane(false);
 
         Tree.NavigateRequested += path => Go(path);
+        Tree.FavoritesProbed += RebuildFavoritesMenu;
         Notes.Saved += (path, note) =>
         {
             FileList.UpdateNote(path, note);
