@@ -63,6 +63,7 @@ public partial class App : Application
             Theme: new ThemeManager(),
             Updates: new VelopackUpdateService(),
             AiSettings: aiSettings);
+        Perf.Log("services ready");
 
         var window = new MainWindow(new MainViewModel(services, _args));
         owner.Window = window;

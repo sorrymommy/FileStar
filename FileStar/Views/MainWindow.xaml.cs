@@ -31,6 +31,7 @@ public partial class MainWindow : Window
         WireViewModel();
         WireWindow();
         vm.Start();
+        Perf.Log("window built");
     }
 
     void WireViewModel()

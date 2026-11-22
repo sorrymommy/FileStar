@@ -29,12 +29,16 @@ public sealed class FolderNode : ObservableObject
     readonly bool _exactIcon;
     bool _isExpanded, _isSelected, _loaded, _isRenaming;
     bool _isLast, _isOnPath, _pathLineTop, _pathLineBottom;
+    bool _probePending;
+    int _reloads;
+    DriveInfo? _drive;
+    string _name;
     ImageSource? _icon;
 
     FolderNode(FolderTreeContext? context, string name, string? path, bool exactIcon)
     {
         _context = context;
-        Name = name;
+        _name = name;
         FullPath = path;
         _exactIcon = exactIcon;
         Children.CollectionChanged += OnChildrenChanged;
@@ -70,7 +74,12 @@ public sealed class FolderNode : ObservableObject
     /// <summary>This node and everything loaded below it.</summary>
     public IEnumerable<FolderNode> SelfAndDescendants() => Children.SelectMany(c => c.SelfAndDescendants()).Prepend(this);
 
-    public string Name { get; }
+    /// <summary>Changes only once, when a drive's volume label arrives (see <see cref="ProbeAsync"/>).</summary>
+    public string Name
+    {
+        get => _name;
+        private set => Set(ref _name, value);
+    }
 
     public override string ToString() => Name;   // what screen readers and UI Automation read for the tree item
 
@@ -110,6 +119,7 @@ public sealed class FolderNode : ObservableObject
         : IsFavoriteGroup
         ? _icon ??= ShellInfo.GetIcon("", true)
         : IsVirtual ? (Name == Locations.ThisPc ? ShellInfo.ThisPcIcon : null)
+        : _probePending ? ShellInfo.GetIcon("", true)   // the plain folder icon: asking the shell about the path could block
         : _icon ??= ShellInfo.GetIcon(FullPath!, true, _exactIcon));
 
     public bool IsExpanded
@@ -192,11 +202,64 @@ public sealed class FolderNode : ObservableObject
         return node;
     }
 
+    /// <summary>
+    /// A folder node made without touching the disk: it shows an expander and the plain folder icon until
+    /// <see cref="ProbeAsync"/> finds out the rest. For the nodes built at start-up, where any folder or drive may be
+    /// slow to answer (#137).
+    /// </summary>
+    static FolderNode Unprobed(FolderTreeContext context, string path, string name, DriveInfo? drive = null)
+    {
+        var node = new FolderNode(context, name, path, exactIcon: true) { _probePending = true, _drive = drive };
+        node.Children.Add(Placeholder());
+        return node;
+    }
+
+    /// <summary>
+    /// Finishes a node made by <see cref="Unprobed"/>: whether it has subfolders, its own shell icon and, for a drive,
+    /// its volume label. All of it is read off the UI thread — a disconnected network drive, a cloud drive that is
+    /// still starting or a sleeping disk can take many seconds to answer, and the window must not wait for that.
+    /// </summary>
+    public async Task ProbeAsync()
+    {
+        if (!_probePending || _context == null)
+            return;
+        long started = Perf.Now;
+        string path = FullPath!;
+        var files = _context.Files;
+        var drive = _drive;
+        int reloads = _reloads;
+        // Its own thread: an unreachable share holds it for the network timeout, which would starve the thread pool.
+        var (label, hasSubfolders) = await Task.Factory.StartNew(() => Probe(files, path, drive),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        await ShellInfo.PrefetchAsync(new[] { (path, true, _exactIcon, "") });
+        _probePending = false;
+        // Kept on the node, so drawing it never asks the shell on the UI thread, even after the icon cache is cleared.
+        _icon = ShellInfo.TryGetCachedIcon(path, true, _exactIcon, out var icon) && icon != null ? icon : ShellInfo.GetIcon("", true);
+        if (label != null)
+            Name = label;
+        // A reload meanwhile has already read the folder afresh.
+        if (!hasSubfolders && !_loaded && reloads == _reloads)
+        {
+            Children.Clear();
+            _loaded = true;
+        }
+        OnPropertyChanged(nameof(Icon));
+        Perf.Log($"tree probe {drive?.Name ?? Path.GetFileName(path)}: {Perf.Now - started} ms");
+    }
+
+    static (string? Label, bool HasSubfolders) Probe(IFileSystem files, string path, DriveInfo? drive)
+    {
+        if (drive == null)
+            return (null, files.HasSubfolders(path));
+        var (label, ready) = Locations.DriveState(drive);
+        return (label, ready);
+    }
+
     public static FolderNode FromFavorite(FolderTreeContext context, Favorite favorite)
     {
         if (!favorite.IsGroup)
         {
-            var folder = Folder(context, favorite.FullPath!, favorite.Name, exactIcon: true);
+            var folder = Unprobed(context, favorite.FullPath!, favorite.Name);
             folder.Favorite = favorite;
             return folder;
         }
@@ -215,24 +278,16 @@ public sealed class FolderNode : ObservableObject
     public static FolderNode Tag(string tag, int count) =>
         new(null, $"#{tag} ({count:N0})", SearchLocation.Tag(tag).Path, false) { _loaded = true, TagName = tag };
 
-    public static FolderNode Drive(FolderTreeContext context, DriveInfo drive)
-    {
-        var node = new FolderNode(context, Locations.DriveLabel(drive), drive.RootDirectory.FullName, true);
-        bool ready;
-        try { ready = drive.IsReady; }
-        catch { ready = false; }
-        if (ready)
-            node.Children.Add(Placeholder());
-        else
-            node._loaded = true;
-        return node;
-    }
+    /// <summary>A drive under 내 PC, labelled by its type until <see cref="ProbeAsync"/> reads the volume label.</summary>
+    public static FolderNode Drive(FolderTreeContext context, DriveInfo drive) =>
+        Unprobed(context, drive.RootDirectory.FullName, Locations.DriveLabelByType(drive), drive);
 
     public void Reload()
     {
         if (IsVirtual || _context == null)
             return;
         _loaded = false;
+        _reloads++;
         if (_isExpanded)
             LoadChildren();
         else

@@ -85,18 +85,35 @@ public static class Locations
         return RootLabels[root] = label;
     }
 
-    public static string DriveLabel(DriveInfo drive)
+    /// <summary>"Data (D:)". Asks the drive, which can take seconds (see <see cref="DriveLabelByType"/>).</summary>
+    public static string DriveLabel(DriveInfo drive) => DriveState(drive).Label;
+
+    /// <summary>The label and whether the drive is ready, asking the drive once (each question can take seconds).</summary>
+    public static (string Label, bool Ready) DriveState(DriveInfo drive)
     {
-        string label = "";
-        try
+        bool ready = IsReady(drive);
+        string volumeLabel = "";
+        if (ready)
         {
-            if (drive.IsReady)
-                label = drive.VolumeLabel;
+            try { volumeLabel = drive.VolumeLabel; }
+            catch { }
         }
-        catch { }
-        if (string.IsNullOrEmpty(label))
-            label = DriveTypeName(drive.DriveType);
-        return $"{label} ({drive.Name.TrimEnd('\\')})";
+        return (DriveLabel(drive, volumeLabel), ready);
+    }
+
+    /// <summary>
+    /// "로컬 디스크 (D:)": without asking the drive. A disconnected network drive or a cloud drive that is still
+    /// starting can take many seconds to report whether it is ready or what it is called.
+    /// </summary>
+    public static string DriveLabelByType(DriveInfo drive) => DriveLabel(drive, "");
+
+    static string DriveLabel(DriveInfo drive, string volumeLabel) =>
+        $"{(string.IsNullOrEmpty(volumeLabel) ? DriveTypeName(drive.DriveType) : volumeLabel)} ({drive.Name.TrimEnd('\\')})";
+
+    public static bool IsReady(DriveInfo drive)
+    {
+        try { return drive.IsReady; }
+        catch { return false; }
     }
 
     public static string DriveTypeName(DriveType type) => type switch

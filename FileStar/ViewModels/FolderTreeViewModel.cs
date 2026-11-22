@@ -61,7 +61,26 @@ public sealed class FolderTreeViewModel : ObservableObject
         Roots.Add(_tagsNode);
         if (FavoriteAnchor != null)
             FavoriteAnchor = FindFavoriteFolder(FavoriteAnchor.FullPath!);
+        Probing = Task.WhenAll(ProbeFavoritesAsync(), ProbeAsync(_pcNode));
     }
+
+    /// <summary>
+    /// Completes once the favorites and drives the tree last built have their labels, icons and expanders. They are
+    /// built without touching the disk and probed in the background, so a slow drive never holds up the window.
+    /// </summary>
+    public Task Probing { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The favorite folders' own icons are now cached (e.g. for the 즐겨찾기 menu).</summary>
+    public event Action? FavoritesProbed;
+
+    async Task ProbeFavoritesAsync()
+    {
+        await ProbeAsync(_favoritesNode!);
+        FavoritesProbed?.Invoke();
+    }
+
+    /// <summary>Each node on its own, so one slow drive doesn't hold up the others.</summary>
+    static Task ProbeAsync(FolderNode root) => Task.WhenAll(root.SelfAndDescendants().ToList().Select(n => n.ProbeAsync()));
 
     IEnumerable<FolderNode> FavoriteNodes() => _favorites.Items.Select(f => FolderNode.FromFavorite(_context, f));
 
@@ -234,6 +253,7 @@ public sealed class FolderTreeViewModel : ObservableObject
         foreach (var node in FavoriteNodes())
             _favoritesNode.Children.Add(node);
         _favoritesNode.IsExpanded = true;
+        Probing = Task.WhenAll(Probing, ProbeFavoritesAsync());
         if (FavoriteAnchor != null)
         {
             FavoriteAnchor = FindFavoriteFolder(FavoriteAnchor.FullPath!);
