@@ -12,7 +12,7 @@
     <AssemblyTitle>FileStar</AssemblyTitle>
     <ApplicationIcon>FileStar.ico</ApplicationIcon>
     <!-- Shown in 설정 > 앱; a release tag (v1.0.0) must match it, see .github/workflows/release.yml -->
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Company>FileStar</Company>
     <Copyright>Copyright © 2026</Copyright>
     <!-- Main is in App.xaml.cs so Velopack can run before WPF starts (install/update hooks) -->
