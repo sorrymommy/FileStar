@@ -54,8 +54,13 @@ public sealed class ShellFileOperations(INotesStore notes, IUndoHistory undo, IW
     {
         get
         {
-            try { return Clipboard.ContainsFileDropList(); }
-            catch (System.Runtime.InteropServices.ExternalException) { return false; }
+            try
+            {
+                var data = Clipboard.GetDataObject();
+                return data != null && (data.GetDataPresent(DataFormats.FileDrop, autoConvert: false) ||
+                                        VirtualFiles.Formats.Any(f => data.GetDataPresent(f, autoConvert: false)));
+            }
+            catch (ExternalException) { return false; }
         }
     }
 
@@ -92,11 +97,29 @@ public sealed class ShellFileOperations(INotesStore notes, IUndoHistory undo, IW
     /// </remarks>
     public async Task<bool> PasteAsync(string folder)
     {
-        if (!Clipboard.ContainsFileDropList())
-            return false;
+        if (Clipboard.ContainsFileDropList())
+            return await PastePathsAsync(folder);
+        return VirtualFiles.Formats.Any(Clipboard.ContainsData) && PasteVirtualFiles(folder);
+    }
+
+    /// <summary>
+    /// Files copied on a Remote Desktop host (or from a zip, phone, mail attachment) have no path, so Windows writes
+    /// them out, in the background. They have no memos to carry. Ctrl+Z covers the new top-level names: undoing
+    /// recycles whichever of them exist by then (a name "둘 다 유지" changed to "이름 (2)" isn't known, so stays).
+    /// </summary>
+    bool PasteVirtualFiles(string folder)
+    {
+        var result = VirtualFiles.PasteClipboard(owner.Handle, folder);
+        if (result.Incoming.Count > 0)
+            undo.Push(new CreateUndo(result.Incoming, "붙여넣기"));
+        return result.Dropped;
+    }
+
+    async Task<bool> PastePathsAsync(string folder)
+    {
         var sources = Clipboard.GetFileDropList().Cast<string>().ToList();
-        bool move = Clipboard.GetData("Preferred DropEffect") is MemoryStream effect && effect.Length >= 4 &&
-                    (BitConverter.ToInt32(effect.ToArray(), 0) & DROPEFFECT_MOVE) != 0;
+        bool move = ClipboardData.ReadFromClipboard("Preferred DropEffect", sizeof(int)) is { Length: sizeof(int) } effect &&
+                    (BitConverter.ToInt32(effect) & DROPEFFECT_MOVE) != 0;
         bool ok = await TransferAsync(sources, folder, move);
         if (ok && move)
             Clipboard.Clear();   // the cut files are gone from their old place, as in Explorer

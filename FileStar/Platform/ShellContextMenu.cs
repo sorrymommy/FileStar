@@ -166,7 +166,14 @@ public static class ShellContextMenu
         }
     }
 
-    static IContextMenu CreateForItems(IntPtr hwnd, IReadOnlyList<string> paths)
+    static IContextMenu CreateForItems(IntPtr hwnd, IReadOnlyList<string> paths) =>
+        (IContextMenu)UIObjectOf(hwnd, paths, typeof(IContextMenu).GUID);
+
+    /// <summary>
+    /// A shell object (context menu, drop target, …) for <paramref name="paths"/>, all in one folder, as Explorer
+    /// gets it from their parent folder. <paramref name="hwnd"/> owns any dialogs it shows.
+    /// </summary>
+    internal static object UIObjectOf(IntPtr hwnd, IReadOnlyList<string> paths, Guid iid)
     {
         var pidls = new List<IntPtr>();
         object? parentObject = null;
@@ -182,9 +189,8 @@ public static class ShellContextMenu
             var parent = (IShellFolder)parentObject;
             // Child IDs are the last segment of each absolute ID (all items share the parent).
             var children = pidls.Select(ILFindLastID).ToArray();
-            var menuIid = typeof(IContextMenu).GUID;
-            Marshal.ThrowExceptionForHR(parent.GetUIObjectOf(hwnd, (uint)children.Length, children, ref menuIid, IntPtr.Zero, out var menuObject));
-            return (IContextMenu)menuObject;
+            Marshal.ThrowExceptionForHR(parent.GetUIObjectOf(hwnd, (uint)children.Length, children, ref iid, IntPtr.Zero, out var uiObject));
+            return uiObject;
         }
         finally
         {
