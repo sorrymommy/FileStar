@@ -17,6 +17,8 @@
     <Copyright>Copyright © 2026</Copyright>
     <!-- Main is in App.xaml.cs so Velopack can run before WPF starts (install/update hooks) -->
     <StartupObject>FileStar.App</StartupObject>
+    <!-- WPF's clipboard and drag-and-drop would otherwise deserialize objects other programs put there (CWE-502) -->
+    <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
   </PropertyGroup>
 
   <ItemGroup>

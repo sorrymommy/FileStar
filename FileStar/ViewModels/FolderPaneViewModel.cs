@@ -185,8 +185,15 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
 
     public async Task PasteAsync()
     {
-        if (_folder.Length > 0 && await _fileOps.PasteAsync(_folder))
-            await AfterChangeAsync();
+        try
+        {
+            if (_folder.Length > 0 && await _fileOps.PasteAsync(_folder))
+                await AfterChangeAsync();
+        }
+        catch (Exception ex)
+        {
+            _dialogs.Warn("붙여넣을 수 없습니다: " + ex.Message);
+        }
     }
 
     public async Task DeleteAsync(bool permanently)
