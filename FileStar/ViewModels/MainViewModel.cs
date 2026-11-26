@@ -12,7 +12,7 @@ public sealed record InfoHeader(ImageSource? Icon, string Title, string Subtitle
 /// <summary>Where the view should put the keyboard focus.</summary>
 /// <summary>Where the view should move the keyboard focus. TreeIfFocused: back to the tree, unless the user already
 /// clicked somewhere else.</summary>
-public enum FocusTarget { FileList, Tree, TreeIfFocused, SearchBox, NoteBox }
+public enum FocusTarget { FileList, ActiveList, Tree, TreeIfFocused, SearchBox, NoteBox }
 
 /// <summary>
 /// The main window: tabs and navigation, the address bar and breadcrumb, which list is active (두 창 보기),
@@ -46,7 +46,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         FileList = new FileListViewModel(services.FileSystem, services.Notes);
         Dual = new FolderPaneViewModel(services.FileSystem, services.Notes, services.FileOps, services.Dialogs, services.Shell, services.Watch);
-        Tree = new FolderTreeViewModel(new FolderTreeContext(services.FileSystem, services.Notes), services.Favorites, services.Notes);
+        Tree = new FolderTreeViewModel(new FolderTreeContext(services.FileSystem, services.Notes), services.Favorites, services.Notes, services.Places);
         Notes = new NotePaneViewModel(services.Notes, services.Dialogs);
         Properties = new PropertiesViewModel();
         Search = new SearchPanelViewModel();
@@ -162,7 +162,7 @@ public sealed partial class MainViewModel : ObservableObject
     public void Start()
     {
         Tree.Build();
-        static bool Openable(string path) => Locations.IsVirtual(path) || Directory.Exists(path);
+        static bool Openable(string path) => Locations.IsVirtual(path) || Locations.IsFolder(path);
         var startPaths = _startPaths.Where(Openable).ToList();
         var pinned = new HashSet<int>(Settings.PinnedTabs ?? new());
         var paths = startPaths.Count > 0
@@ -226,29 +226,32 @@ public sealed partial class MainViewModel : ObservableObject
         CommandManager.InvalidateRequerySuggested();
     }
 
-    static List<Crumb> BuildCrumbs(string path)
+    internal static List<Crumb> BuildCrumbs(string path)
     {
-        var crumbs = new List<Crumb>();
         if (SearchLocation.TryParse(path) is { } search)
         {
             // A search sits under the folder it searched: 내 PC › … › 폴더 › '보고서' 검색
-            if (search.Kind == SearchKind.Here && Directory.Exists(search.Base))
-                crumbs.AddRange(BuildCrumbs(search.Base));
-            crumbs.Add(new Crumb(search.Title, path, crumbs.Count > 0));
+            var steps = search.Kind == SearchKind.Here && Directory.Exists(search.Base) ? BuildCrumbs(search.Base) : new List<Crumb>();
+            steps.Add(new Crumb(search.Title, path));
+            return steps;
+        }
+        if (Locations.IsThisPc(path))
+            return new List<Crumb> { new(Locations.ThisPc, Locations.ThisPc) };
+        if (Locations.IsServer(path))
+            return new List<Crumb> { new(path.TrimStart('\\'), path) };
+        var crumbs = new List<Crumb>();
+        for (var dir = new DirectoryInfo(path); dir != null; dir = dir.Parent)
+            crumbs.Insert(0, new Crumb(Locations.DisplayName(dir.FullName), dir.FullName));
+        if (Locations.ServerOf(path) is string server)
+        {
+            // Network paths aren't under 내 PC: NAME › share › … (a WSL distribution stands on its own: Ubuntu › home)
+            crumbs[0] = crumbs[0] with { Name = Locations.LastSegment(crumbs[0].FullPath) };
+            if (!Locations.IsWsl(path))
+                crumbs.Insert(0, new Crumb(server.TrimStart('\\'), server));
             return crumbs;
         }
-        if (!Locations.IsThisPc(path))
-        {
-            for (var dir = new DirectoryInfo(path); dir != null; dir = dir.Parent)
-                crumbs.Insert(0, new Crumb(Locations.DisplayName(dir.FullName), dir.FullName, true));
-            if (path.StartsWith(@"\\"))
-            {
-                crumbs[0] = crumbs[0] with { ShowSeparator = false };   // network paths aren't under 내 PC
-                return crumbs;
-            }
-        }
         // Local paths start from 내 PC, as in Explorer: 내 PC › Windows (C:) › Users › …
-        crumbs.Insert(0, new Crumb(Locations.ThisPc, Locations.ThisPc, false));
+        crumbs.Insert(0, new Crumb(Locations.ThisPc, Locations.ThisPc));
         return crumbs;
     }
 
@@ -324,7 +327,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             return;
         }
-        if (!Locations.IsVirtual(path) && !Directory.Exists(path))
+        if (!Locations.IsVirtual(path) && !Locations.IsFolder(path))
         {
             _s.Dialogs.Warn($"'{path}' 폴더를 찾을 수 없습니다.");
             return;
@@ -385,9 +388,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
         if (InVirtual)
             return;
-        var parent = Directory.GetParent(_active.FullPath);
-        if (parent != null)
-            Navigate(parent.FullName, Path.GetFileName(_active.FullPath));
+        if (Locations.ParentOf(_active.FullPath) is string parent)
+            Navigate(parent, Locations.LastSegment(_active.FullPath));
         else
             Navigate(Locations.ThisPc, Locations.DisplayName(_active.FullPath));   // above a drive is 내 PC, as in Explorer
     }
@@ -402,7 +404,7 @@ public sealed partial class MainViewModel : ObservableObject
             OnDualActiveChanged();
         }
         UpdateTitle();
-        AddressText = Locations.AddressText(path);
+        RestoreAddress();
         Crumbs = BuildCrumbs(path);
         OnPropertyChanged(nameof(MainPaneTitle));
         OnPropertyChanged(nameof(MainPaneToolTip));
@@ -426,7 +428,7 @@ public sealed partial class MainViewModel : ObservableObject
     void UpdateChrome()
     {
         string location = ActiveFolder;
-        AddressText = IsDualActive ? location : Locations.AddressText(location);
+        RestoreAddress();
         Crumbs = BuildCrumbs(location);
         UpdateNavigationState();
         UpdateFavoriteState();
@@ -522,18 +524,27 @@ public sealed partial class MainViewModel : ObservableObject
             catch { }
             if (File.Exists(text))
                 Go(Path.GetDirectoryName(text)!, Path.GetFileName(text));
-            else
+            else if (Locations.IsVirtual(text) || Locations.IsFolder(text))
                 Go(text);
+            else
+            {
+                // Stay in the address bar with what was typed, so it can be corrected.
+                _s.Dialogs.Warn($"'{text}' 폴더를 찾을 수 없습니다.");
+                return;
+            }
         }
-        Focus(FocusTarget.FileList);
+        Focus(FocusTarget.ActiveList);
     }
 
-    /// <summary>Esc in the address bar: back to where the tab is.</summary>
+    /// <summary>Esc in the address bar: back to where the active list is, and to that list.</summary>
     public void ResetAddress()
     {
-        AddressText = Locations.AddressText(_active.FullPath);
-        Focus(FocusTarget.FileList);
+        RestoreAddress();
+        Focus(FocusTarget.ActiveList);
     }
+
+    /// <summary>The address bar was left without going anywhere: it shows where the active list is again.</summary>
+    public void RestoreAddress() => AddressText = Locations.AddressText(ActiveFolder);
 
     // ── View options ──
 

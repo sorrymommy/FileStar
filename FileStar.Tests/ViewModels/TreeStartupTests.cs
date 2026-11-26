@@ -36,7 +36,7 @@ public sealed class TreeStartupTests : IDisposable
     }
 
     FolderTreeViewModel NewTree(IFileSystem files) =>
-        new(new FolderTreeContext(files, _t.Notes), _t.Favorites, _t.Notes);
+        new(new FolderTreeContext(files, _t.Notes), _t.Favorites, _t.Notes, _t.Places);
 
     /// <summary>The probes ask the real drives too; a disconnected one shouldn't hang the test run.</summary>
     static Task Probed(FolderTreeViewModel tree) => tree.Probing.WaitAsync(TimeSpan.FromSeconds(60));

@@ -9,7 +9,7 @@
         FontFamily="Segoe UI, Malgun Gothic" FontSize="12"
         Background="{DynamicResource Th.Window.Bg}" Foreground="{DynamicResource Th.Text}"
         PreviewKeyDown="Window_PreviewKeyDown" PreviewKeyUp="Window_PreviewKeyUp"
-        MouseUp="Window_MouseUp"
+        MouseUp="Window_MouseUp" PreviewMouseDown="Window_PreviewMouseDown"
         Closing="Window_Closing">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
@@ -49,11 +49,13 @@
             </Setter>
         </Style>
 
+        <!-- A path button in the address bar -->
         <Style x:Key="CrumbButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{DynamicResource Th.Crumb.Fg}"/>
-            <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="Foreground" Value="{DynamicResource Th.Text}"/>
+            <Setter Property="Padding" Value="5,2"/>
+            <Setter Property="Margin" Value="0,2"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -62,7 +64,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="Background" Value="#33FFFFFF"/>
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Th.Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="bd" Property="Background" Value="{DynamicResource Th.Pressed}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -151,6 +156,12 @@
             </Setter>
         </Style>
         <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource BarButtonBase}"/>
+        <!-- File buttons leave the keyboard in the list they act on (so Ctrl+V still works there after a click),
+             and explain themselves while disabled (nothing selected, nothing to paste). -->
+        <Style x:Key="BarFileButton" TargetType="Button" BasedOn="{StaticResource BarButton}">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="ToolTipService.ShowOnDisabled" Value="True"/>
+        </Style>
         <Style x:Key="BarToggle" TargetType="ToggleButton" BasedOn="{StaticResource BarButtonBase}"/>
         <Style x:Key="BarGlyph" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
@@ -237,7 +248,6 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -409,6 +419,20 @@
                 <Button Style="{StaticResource BarButton}" ToolTip="새로 고침 (F5)" Command="{Binding RefreshCommand}">
                     <TextBlock Style="{StaticResource BarGlyph}" Text="&#xE72C;"/>
                 </Button>
+                <Rectangle Width="1" Fill="{DynamicResource Th.Separator}" Margin="6,5"/>
+                <!-- Files: in the list being used (the right one too in 두 창 보기) -->
+                <Button Style="{StaticResource BarFileButton}" ToolTip="새 폴더 (Ctrl+Shift+N)" Command="{Binding NewFolderCommand}">
+                    <TextBlock Style="{StaticResource BarGlyph}" Text="&#xE8F4;"/>
+                </Button>
+                <Button Style="{StaticResource BarFileButton}" ToolTip="복사 (Ctrl+C)" Command="{Binding CopyActiveCommand}">
+                    <TextBlock Style="{StaticResource BarGlyph}" Text="&#xE8C8;"/>
+                </Button>
+                <Button Style="{StaticResource BarFileButton}" ToolTip="잘라내기 (Ctrl+X)" Command="{Binding CutActiveCommand}">
+                    <TextBlock Style="{StaticResource BarGlyph}" Text="&#xE8C6;"/>
+                </Button>
+                <Button Style="{StaticResource BarFileButton}" ToolTip="붙여넣기 (Ctrl+V)" Command="{Binding PasteActiveCommand}">
+                    <TextBlock Style="{StaticResource BarGlyph}" Text="&#xE77F;"/>
+                </Button>
             </StackPanel>
         </Border>
         </StackPanel>
@@ -443,14 +467,51 @@
                 </Button>
                 <Button Style="{StaticResource ToolButton}" Content="&#xE8F4;" ToolTip="새 폴더 (Ctrl+Shift+N)" Command="{Binding NewFolderCommand}"/>
             </StackPanel>
-            <Border Grid.Column="1" Margin="6,0" BorderBrush="{DynamicResource Th.Input.Border}" Background="{DynamicResource Th.Input.Bg}" BorderThickness="1" CornerRadius="3" Height="28">
+            <!-- Address bar: path buttons (as in Explorer) until it is clicked beside them or Ctrl+L / Alt+D / F4,
+                 then the address as text, all of it selected. Leaving it without Enter puts the buttons back. -->
+            <Border x:Name="AddressFrame" Grid.Column="1" Margin="6,0" BorderBrush="{DynamicResource Th.Input.Border}" Background="{DynamicResource Th.Input.Bg}"
+                    BorderThickness="1" CornerRadius="3" Height="28" PreviewMouseLeftButtonDown="AddressFrame_PreviewMouseLeftButtonDown">
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource IconFont}" Text="&#xE8B7;" Foreground="{DynamicResource Th.Folder}"
                                VerticalAlignment="Center" Margin="7,0,4,0" FontSize="14"/>
-                    <TextBox x:Name="AddressBox" BorderThickness="0" VerticalContentAlignment="Center"
-                             Text="{Binding AddressText, UpdateSourceTrigger=PropertyChanged}"
-                             KeyDown="AddressBox_KeyDown" GotKeyboardFocus="AddressBox_GotKeyboardFocus"
-                             PreviewMouseLeftButtonDown="AddressBox_PreviewMouseLeftButtonDown"/>
+                    <Grid>
+                        <TextBox x:Name="AddressBox" BorderThickness="0" VerticalContentAlignment="Center"
+                                 Text="{Binding AddressText, UpdateSourceTrigger=PropertyChanged}"
+                                 KeyDown="AddressBox_KeyDown" GotKeyboardFocus="AddressBox_GotKeyboardFocus" LostFocus="AddressBox_LostFocus"/>
+                        <!-- Over the text box while it doesn't have the focus. IsFocused (not keyboard focus) so the
+                             text stays while its right-click menu is open or another window is active. -->
+                        <Border x:Name="CrumbBar" Background="{DynamicResource Th.Input.Bg}" Cursor="IBeam">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsFocused, ElementName=AddressBox}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <ScrollViewer x:Name="CrumbScroller" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
+                                          Focusable="False" ScrollChanged="CrumbScroller_ScrollChanged">
+                                <ItemsControl ItemsSource="{Binding Crumbs}" Focusable="False" HorizontalAlignment="Left">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:Crumb}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE76C;" FontSize="8" Margin="3,1,3,0"
+                                                           Foreground="{DynamicResource Th.Text.Muted}" VerticalAlignment="Center"/>
+                                                <Button Style="{StaticResource CrumbButton}" Content="{Binding Name}" CommandParameter="{Binding FullPath}"
+                                                        Command="{Binding DataContext.CrumbCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
                 </DockPanel>
             </Border>
             <!-- 검색: opens a search tab (its options and results live there, not in this bar) -->
@@ -539,29 +600,8 @@
             </ScrollViewer>
         </Border>
 
-        <!-- Breadcrumb -->
-        <Border Grid.Row="3" Background="{DynamicResource Th.Crumb.Bg}" Padding="6,2">
-            <ItemsControl ItemsSource="{Binding Crumbs}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel/>
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:Crumb}">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="›" Foreground="{DynamicResource Th.Crumb.Fg}" FontSize="14" Margin="2,0" VerticalAlignment="Center"
-                                       Visibility="{Binding ShowSeparator, Converter={StaticResource BoolToVisibility}}"/>
-                            <Button Style="{StaticResource CrumbButton}" Content="{Binding Name}" CommandParameter="{Binding FullPath}"
-                                    Command="{Binding DataContext.CrumbCommand, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                        </StackPanel>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </Border>
-
         <!-- Tree | file list -->
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="TreeColumn" Width="320" MinWidth="120"/>
                 <ColumnDefinition Width="5"/>
@@ -830,7 +870,7 @@
                 </StackPanel>
             </Border>
             <ListView x:Name="FileList" Grid.Column="2" BorderThickness="0" ItemsSource="{Binding FileList.View}"
-                      SelectionMode="Extended"
+                      SelectionMode="Extended" ItemContainerStyle="{StaticResource FileRow}"
                       IsTextSearchEnabled="True" TextSearch.TextPath="Name"
                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Standard"
                       MouseDoubleClick="FileList_MouseDoubleClick"
@@ -849,17 +889,6 @@
                         <Setter Property="Padding" Value="6,4"/>
                     </Style>
                 </ListView.Resources>
-                <ListView.ItemContainerStyle>
-                    <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                        <Setter Property="Padding" Value="0,2"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsHidden}" Value="True">
-                                <Setter Property="Opacity" Value="0.55"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </ListView.ItemContainerStyle>
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Width="44">
@@ -1332,7 +1361,7 @@
         </Grid>
 
         <!-- Status bar -->
-        <StatusBar Grid.Row="5" Background="{DynamicResource Th.Status.Bg}" BorderBrush="{DynamicResource Th.Border}" BorderThickness="0,1,0,0">
+        <StatusBar Grid.Row="4" Background="{DynamicResource Th.Status.Bg}" BorderBrush="{DynamicResource Th.Border}" BorderThickness="0,1,0,0">
             <StatusBar.ItemsPanel>
                 <ItemsPanelTemplate>
                     <DockPanel/>

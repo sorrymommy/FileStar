@@ -20,6 +20,7 @@ public sealed class FileListViewModel : ObservableObject
     CancellationTokenSource? _loadCts;
     ListCollectionView? _view;
     IReadOnlyList<FileItem> _selected = Array.Empty<FileItem>();
+    IReadOnlySet<string> _cutPaths = new HashSet<string>();
     string _sortKey = "Name";
     bool _sortDescending;
     Predicate<FileItem>? _hide;
@@ -157,6 +158,14 @@ public sealed class FileListViewModel : ObservableObject
             row.ApplyNotes(_notes);
     }
 
+    /// <summary>Fades the rows of <paramref name="cutPaths"/> (what is cut to the clipboard), now and in later loads.</summary>
+    public void MarkCut(IReadOnlySet<string> cutPaths)
+    {
+        _cutPaths = cutPaths;
+        foreach (var row in AllItems)
+            row.IsCut = cutPaths.Contains(row.FullPath);
+    }
+
     /// <summary>Only the "holds noted files" dots on folders (cheap enough to run after every memo change).</summary>
     public void RefreshFolderMarks()
     {
@@ -221,6 +230,7 @@ public sealed class FileListViewModel : ObservableObject
         foreach (var item in items)
         {
             item.ApplyNotes(_notes);
+            item.IsCut = _cutPaths.Contains(item.FullPath);
             item.DeferShellInfo();
         }
         ShowItems(items);
@@ -284,6 +294,7 @@ public sealed class FileListViewModel : ObservableObject
             foreach (var item in batch)
             {
                 item.ApplyNotes(_notes);
+                item.IsCut = _cutPaths.Contains(item.FullPath);
                 items.Add(item);
             }
             LoadingMessage = $"검색 중... {items.Count:N0}개 찾음";

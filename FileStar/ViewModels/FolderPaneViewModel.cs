@@ -63,6 +63,9 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
 
     public bool HasFolder => _folder.Length > 0;
 
+    /// <summary>Not a computer's list of shared folders (\NAME), which is for opening only.</summary>
+    public bool IsEditable => HasFolder && !Locations.IsServer(_folder);
+
     /// <summary>The accent line under the title strip marks the list that has the keyboard.</summary>
     public bool IsActive
     {
@@ -72,7 +75,7 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
 
     public bool CanGoBack => _back.Count > 0;
     public bool CanGoForward => _forward.Count > 0;
-    public bool CanGoUp => _folder.Length > 0 && Directory.GetParent(_folder) != null;
+    public bool CanGoUp => _folder.Length > 0 && Locations.ParentOf(_folder) != null;
 
     public IReadOnlyList<FileItem> Selected => List.Selected;
 
@@ -86,7 +89,7 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
         {
             return;
         }
-        if (!Directory.Exists(path))
+        if (!Locations.IsFolder(path))
         {
             _dialogs.Warn($"'{path}' 폴더를 찾을 수 없습니다.");
             return;
@@ -122,8 +125,8 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
 
     public void GoUp()
     {
-        if (_folder.Length > 0 && Directory.GetParent(_folder) is { } parent)
-            Navigate(parent.FullName, Path.GetFileName(_folder));
+        if (_folder.Length > 0 && Locations.ParentOf(_folder) is string parent)
+            Navigate(parent, Locations.LastSegment(_folder));
     }
 
     async Task ShowAsync(string path, string? selectName = null)
@@ -179,15 +182,23 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     public void SetClipboard(bool cut)
     {
         var paths = SelectedPaths;
-        if (paths.Count > 0)
+        if (paths.Count == 0 || !IsEditable)
+            return;
+        try
+        {
             _fileOps.SetClipboard(paths, cut);
+        }
+        catch (Exception ex)
+        {
+            _dialogs.Warn((cut ? "잘라내기" : "복사") + "할 수 없습니다: " + ex.Message);
+        }
     }
 
     public async Task PasteAsync()
     {
         try
         {
-            if (_folder.Length > 0 && await _fileOps.PasteAsync(_folder))
+            if (IsEditable && await _fileOps.PasteAsync(_folder))
                 await AfterChangeAsync();
         }
         catch (Exception ex)
@@ -199,13 +210,13 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     public async Task DeleteAsync(bool permanently)
     {
         var paths = SelectedPaths;
-        if (paths.Count > 0 && await _fileOps.DeleteAsync(paths, permanently))
+        if (paths.Count > 0 && IsEditable && await _fileOps.DeleteAsync(paths, permanently))
             await AfterChangeAsync();
     }
 
     public async Task RenameAsync()
     {
-        if (List.Selected is not [var item])
+        if (List.Selected is not [var item] || !IsEditable)
             return;
         if (_dialogs.Ask("이름 바꾸기", "새 이름:", item.Name) is not string newName || newName == item.Name)
             return;
@@ -225,7 +236,7 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     /// <summary>Asks for a name (suggesting "새 폴더") and creates the folder here.</summary>
     public async Task NewFolderAsync()
     {
-        if (_folder.Length == 0)
+        if (!IsEditable)
             return;
         if (_dialogs.Ask("새 폴더", "폴더 이름:", Locations.NewFolderName(_folder)) is not string name)
             return;
@@ -246,7 +257,7 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     public async Task SendToMainAsync(bool move)
     {
         var paths = SelectedPaths;
-        if (paths.Count > 0 && MainFolder() is string target && await _fileOps.TransferAsync(paths, target, move))
+        if (paths.Count > 0 && IsEditable && MainFolder() is string target && await _fileOps.TransferAsync(paths, target, move))
             await AfterChangeAsync();
     }
 
@@ -254,7 +265,7 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     public async Task ReceiveAsync(IReadOnlyList<string> paths, bool move, string? folder = null)
     {
         folder ??= _folder;
-        if (folder.Length > 0 && paths.Count > 0 && await _fileOps.TransferAsync(paths, folder, move))
+        if (folder.Length > 0 && !Locations.IsServer(folder) && paths.Count > 0 && await _fileOps.TransferAsync(paths, folder, move))
             await AfterChangeAsync();
     }
 
@@ -269,22 +280,23 @@ public sealed class FolderPaneViewModel : ObservableObject, IDisposable
     {
         var items = List.Selected;
         bool any = items.Count > 0;
+        bool edit = any && IsEditable;
         string? main = MainFolder();
         string mainName = main == null ? "" : $" ({Locations.DisplayName(main)})";
         return new[]
         {
             MenuItemViewModel.Action("열기", OpenSelected, any, "Enter"),
             MenuItemViewModel.Separator,
-            MenuItemViewModel.Action("왼쪽 창으로 복사" + mainName, () => _ = SendToMainAsync(move: false), any && main != null),
-            MenuItemViewModel.Action("왼쪽 창으로 이동" + mainName, () => _ = SendToMainAsync(move: true), any && main != null),
+            MenuItemViewModel.Action("왼쪽 창으로 복사" + mainName, () => _ = SendToMainAsync(move: false), edit && main != null),
+            MenuItemViewModel.Action("왼쪽 창으로 이동" + mainName, () => _ = SendToMainAsync(move: true), edit && main != null),
             MenuItemViewModel.Separator,
-            MenuItemViewModel.Action("잘라내기", () => SetClipboard(cut: true), any, "Ctrl+X"),
-            MenuItemViewModel.Action("복사", () => SetClipboard(cut: false), any, "Ctrl+C"),
-            MenuItemViewModel.Action("붙여넣기", () => _ = PasteAsync(), _fileOps.ClipboardHasFiles, "Ctrl+V"),
-            MenuItemViewModel.Action("삭제", () => _ = DeleteAsync(permanently: false), any, "Del"),
-            MenuItemViewModel.Action("이름 바꾸기", () => _ = RenameAsync(), items.Count == 1, "F2"),
+            MenuItemViewModel.Action("잘라내기", () => SetClipboard(cut: true), edit, "Ctrl+X"),
+            MenuItemViewModel.Action("복사", () => SetClipboard(cut: false), edit, "Ctrl+C"),
+            MenuItemViewModel.Action("붙여넣기", () => _ = PasteAsync(), IsEditable && _fileOps.ClipboardHasFiles, "Ctrl+V"),
+            MenuItemViewModel.Action("삭제", () => _ = DeleteAsync(permanently: false), edit, "Del"),
+            MenuItemViewModel.Action("이름 바꾸기", () => _ = RenameAsync(), edit && items.Count == 1, "F2"),
             MenuItemViewModel.Separator,
-            MenuItemViewModel.Action("새 폴더", () => _ = NewFolderAsync(), _folder.Length > 0, "Ctrl+Shift+N"),
+            MenuItemViewModel.Action("새 폴더", () => _ = NewFolderAsync(), IsEditable, "Ctrl+Shift+N"),
             MenuItemViewModel.Action("새로 고침", () => _ = ReloadAsync(), true, "F5"),
         };
     }

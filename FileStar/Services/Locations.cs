@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 
 namespace FileStar.Services;
@@ -13,6 +14,9 @@ public static class Locations
     /// <summary>The virtual "내 PC" location (user folders and drives). Not a real path, so it never collides with one.</summary>
     public const string ThisPc = "내 PC";
 
+    /// <summary>The user's 다운로드 folder.</summary>
+    public static string Downloads => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+
     /// <summary>Also accepts what people type for it in the address bar.</summary>
     public static bool IsThisPc(string? path) =>
         path != null && (path.Trim() is var p) &&
@@ -26,6 +30,57 @@ public static class Locations
     /// <summary>The canonical form a tab stores: 내 PC, a result list as it is, or a normalized folder path.</summary>
     public static string Canonical(string path) =>
         IsThisPc(path) ? ThisPc : IsVirtual(path) ? path : Normalize(path);
+
+    /// <summary>A network path: "\\server\share\…" (also WSL's "\\wsl.localhost\Ubuntu\…"). Not "\\?\" or "\\.\" device paths.</summary>
+    public static bool IsUnc([NotNullWhen(true)] string? path) =>
+        path is { Length: > 2 } && path.StartsWith(@"\\") && path[2] is not ('?' or '.');
+
+    /// <summary>A computer on the network by itself, "\\NAME": FileStar lists its shared folders there.</summary>
+    public static bool IsServer(string? path) =>
+        IsUnc(path) && path!.TrimEnd('\\') is var trimmed && trimmed.Length > 2 && trimmed.IndexOfAny(['\\', '/'], 2) < 0;
+
+    /// <summary>A WSL distribution's folder: "\\wsl.localhost\Ubuntu\…" (or the older "\\wsl$\…").</summary>
+    public static bool IsWsl(string path) =>
+        ServerOf(path) is string server && (server.Equals(@"\\wsl.localhost", StringComparison.OrdinalIgnoreCase) ||
+                                            server.Equals(@"\\wsl$", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>"\\NAME" for any network path under that computer, or null for other paths.</summary>
+    public static string? ServerOf(string path)
+    {
+        if (!IsUnc(path))
+            return null;
+        int end = path.IndexOf('\\', 2);
+        return end < 0 ? path : path[..end];
+    }
+
+    /// <summary>The folder above <paramref name="path"/>: for a shared folder ("\\NAME\share"), the computer; null above a drive, a computer or a WSL distribution.</summary>
+    public static string? ParentOf(string path)
+    {
+        if (IsServer(path))
+            return null;
+        // WSL's "\\wsl.localhost" isn't a computer that lists anything: a distribution's root has nothing above it.
+        return Directory.GetParent(path)?.FullName ?? (IsWsl(path) ? null : ServerOf(path));
+    }
+
+    /// <summary>An item's name in its folder. A shared folder ("\\NAME\share") is a root, whose Name .NET gives as the whole path.</summary>
+    public static string ItemName(FileSystemInfo info) =>
+        IsUnc(info.FullName) && IsRoot(info.FullName) ? LastSegment(info.FullName) : info.Name;
+
+    /// <summary>
+    /// The last part of a path: "share" for "\\NAME\share", "Sub" for "C:\Work\Sub". Path.GetFileName gives "" for a
+    /// shared folder, which .NET treats as a root, like "C:\".
+    /// </summary>
+    public static string LastSegment(string path)
+    {
+        string trimmed = path.TrimEnd('\\');
+        return trimmed[(trimmed.LastIndexOf('\\') + 1)..];
+    }
+
+    /// <summary>
+    /// A folder FileStar can show: one on disk, or a computer on the network (its shared folders). Whether a computer
+    /// answers is found out by opening it, which can take seconds.
+    /// </summary>
+    public static bool IsFolder(string path) => IsServer(path) || Directory.Exists(path);
 
     public static bool IsRoot(string path)
     {
@@ -127,6 +182,8 @@ public static class Locations
 
     public static string Normalize(string path)
     {
+        if (IsServer(path))
+            return path.TrimEnd('\\');
         if (path.Length == 2 && path[1] == ':')
             path += "\\";
         string full = Path.GetFullPath(path);

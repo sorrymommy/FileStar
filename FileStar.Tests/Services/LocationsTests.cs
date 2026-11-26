@@ -32,6 +32,53 @@ public class LocationsTests
     public void Same_or_under_compares_whole_path_segments(string path, string folder, bool expected) =>
         Assert.Equal(expected, Locations.IsSameOrUnder(path, folder));
 
+    [Theory]
+    [InlineData(@"\\NAS", true, true, @"\\NAS")]
+    [InlineData(@"\\NAS\", true, true, @"\\NAS")]
+    [InlineData(@"\\NAS\share\docs", true, false, @"\\NAS")]
+    [InlineData(@"\\NAS/share", true, false, @"\\NAS/share")]
+    [InlineData(@"\\wsl.localhost\Ubuntu", true, false, @"\\wsl.localhost")]
+    [InlineData(@"\\?\C:\Work", false, false, null)]
+    [InlineData(@"\\.\pipe\x", false, false, null)]
+    [InlineData(@"C:\Work", false, false, null)]
+    public void Network_paths_and_their_computer_are_recognized(string path, bool unc, bool server, string? serverOf)
+    {
+        Assert.Equal(unc, Locations.IsUnc(path));
+        Assert.Equal(server, Locations.IsServer(path));
+        Assert.Equal(serverOf, Locations.ServerOf(path)?.TrimEnd('\\'));
+    }
+
+    [Fact]
+    public void Above_a_shared_folder_is_its_computer_and_above_that_nothing()
+    {
+        Assert.Equal(@"\\NAS\share", Locations.ParentOf(@"\\NAS\share\docs"));
+        Assert.Equal(@"\\NAS", Locations.ParentOf(@"\\NAS\share"));
+        Assert.Null(Locations.ParentOf(@"\\NAS"));
+        Assert.Null(Locations.ParentOf(@"C:\"));
+        Assert.Equal(@"C:\Work", Locations.ParentOf(@"C:\Work\Sub"));
+        Assert.Null(Locations.ParentOf(@"\\wsl.localhost\Ubuntu"));   // "\\wsl.localhost" lists nothing
+        Assert.Equal(@"\\wsl.localhost\Ubuntu", Locations.ParentOf(@"\\wsl.localhost\Ubuntu\home"));
+        Assert.Equal(@"\\NAS", Locations.Canonical(@"\\NAS\"));
+        Assert.True(Locations.IsFolder(@"\\NAS"));
+    }
+
+    [Fact]
+    public void Wsl_paths_are_told_apart_from_other_network_paths()
+    {
+        Assert.True(Locations.IsWsl(@"\\wsl.localhost\Ubuntu\home"));
+        Assert.True(Locations.IsWsl(@"\\WSL$\Ubuntu"));
+        Assert.False(Locations.IsWsl(@"\\NAS\share"));
+        Assert.False(Locations.IsWsl(@"C:\wsl.localhost"));
+    }
+
+    [Fact]
+    public void A_shared_folder_is_named_by_its_share_not_its_whole_path()
+    {
+        Assert.Equal("share", Locations.ItemName(new System.IO.DirectoryInfo(@"\\NAS\share")));
+        Assert.Equal("docs", Locations.ItemName(new System.IO.DirectoryInfo(@"\\NAS\share\docs")));
+        Assert.Equal("Sub", Locations.ItemName(new System.IO.DirectoryInfo(@"C:\Work\Sub")));
+    }
+
     [Fact]
     public void Child_name_is_only_given_for_direct_children()
     {

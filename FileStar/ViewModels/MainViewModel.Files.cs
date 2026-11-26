@@ -1,4 +1,5 @@
 using System.IO;
+using System.Windows.Input;
 
 namespace FileStar.ViewModels;
 
@@ -13,8 +14,11 @@ public sealed partial class MainViewModel
     List<string> SelectedPaths => FileList.Selected.Select(i => i.FullPath).ToList();
     bool AnySelected => FileList.Selected.Count > 0;
 
-    /// <summary>In 내 PC the rows are drives and the user's main folders: open, browse and inspect only.</summary>
-    bool Editable => !InThisPc;
+    /// <summary>
+    /// In 내 PC the rows are drives and the user's main folders, and on a computer (\NAME) its shared folders: open,
+    /// browse and inspect only.
+    /// </summary>
+    bool Editable => !InThisPc && !Locations.IsServer(_active?.FullPath);
 
     // ── Context-menu state (raised when the menu opens) ──
 
@@ -99,7 +103,7 @@ public sealed partial class MainViewModel
     public void ClipboardSelected(bool cut)
     {
         var paths = SelectedPaths;
-        if (paths.Count == 0 || InThisPc)
+        if (paths.Count == 0 || !Editable)
             return;
         try
         {
@@ -112,9 +116,34 @@ public sealed partial class MainViewModel
         }
     }
 
+    /// <summary>The clipboard changed, in any program: fade what is cut now in both lists, and re-check 붙여넣기.</summary>
+    public void OnClipboardChanged()
+    {
+        var cut = _s.FileOps.CutPaths;
+        FileList.MarkCut(cut);
+        Dual.List.MarkCut(cut);
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    // ── The toolbar's file buttons: the list being used (either one in 두 창 보기) ──
+
+    void ClipboardActive(bool cut)
+    {
+        if (IsDualActive)
+            Dual.SetClipboard(cut);
+        else
+            ClipboardSelected(cut);
+    }
+
+    bool CanClipboardActive => IsDualActive ? Dual.IsEditable && Dual.Selected.Count > 0 : Editable && AnySelected;
+
+    Task PasteIntoActiveAsync() => IsDualActive ? Dual.PasteAsync() : PasteIntoCurrentFolderAsync();
+
+    bool CanPasteActive => CanCreateFolder && _s.FileOps.ClipboardHasFiles;
+
     public async Task PasteIntoCurrentFolderAsync()
     {
-        if (InVirtual)
+        if (InVirtual || !Editable)
             return;
         string folder = _active.FullPath;
         try
@@ -132,7 +161,7 @@ public sealed partial class MainViewModel
     public async Task DeleteSelectedAsync(bool permanently)
     {
         var paths = SelectedPaths;
-        if (paths.Count == 0 || InThisPc)   // never offer to delete a drive or a user folder from 내 PC
+        if (paths.Count == 0 || !Editable)   // never offer to delete a drive, a user folder from 내 PC or a share
             return;
         // Keep the cursor near where it was: select the row now at the same position.
         var visible = FileList.VisibleItems.ToList();
@@ -190,7 +219,8 @@ public sealed partial class MainViewModel
             _ = CreateNewFolderAsync();
     }
 
-    public bool CanCreateFolder => !Locations.IsVirtual(ActiveFolder);
+    /// <summary>The list being used shows a folder things can be made or pasted in (not 내 PC, a result list or a computer).</summary>
+    public bool CanCreateFolder => ActiveFolder.Length > 0 && !Locations.IsVirtual(ActiveFolder) && !Locations.IsServer(ActiveFolder);
 
     /// <summary>"새 폴더" (or "새 폴더 (2)" …) in the current folder, or in <paramref name="parent"/> (the tree's menu,
     /// which goes there first), then rename it in place.</summary>
@@ -198,7 +228,7 @@ public sealed partial class MainViewModel
     {
         if (parent != null && !IsShowing(parent))
             Navigate(parent);
-        if (InVirtual)
+        if (InVirtual || !Editable)
             return;
         string name = Locations.NewFolderName(_active.FullPath);
         try
@@ -219,7 +249,7 @@ public sealed partial class MainViewModel
 
     public void BeginRename(FileItem item)
     {
-        if (InThisPc)
+        if (!Editable)
             return;
         if (_renamingItem != null)
             _renamingItem.IsRenaming = false;
@@ -333,7 +363,7 @@ public sealed partial class MainViewModel
         // In list order, so numbering follows what the user sees.
         var selected = FileList.Selected.ToHashSet();
         var items = FileList.VisibleItems.Where(selected.Contains).ToList();
-        if (items.Count < 2 || InThisPc)
+        if (items.Count < 2 || !Editable)
             return;
         if (_s.Windows.AskBatchRename(items) is not { Count: > 0 } plan)
             return;
@@ -351,7 +381,7 @@ public sealed partial class MainViewModel
     async Task ZipSelectedAsync()
     {
         var items = Selected;
-        if (items.Count == 0 || InThisPc)
+        if (items.Count == 0 || !Editable)
             return;
         string folder = items[0].FolderPath;
         string baseName = items.Count == 1

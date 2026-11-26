@@ -4,25 +4,31 @@ using System.IO;
 namespace FileStar.ViewModels;
 
 /// <summary>
-/// The folder tree: 즐겨찾기, 내 PC (drives) and 태그. Follows the location being shown — expanding down to it,
-/// selecting it and drawing the red path line — and stays inside a 즐겨찾기 branch while browsing below a favorite.
-/// A location it doesn't list (inside a hidden folder, say) gets the path line as far as it goes, with nothing selected.
+/// The folder tree: 즐겨찾기, the pinned 바탕 화면 · 다운로드 · 문서, 내 PC (drives), 네트워크, Linux (WSL) and 태그.
+/// Follows the location being shown — expanding down to it, selecting it and drawing the red path line — and stays
+/// inside the favorite or pinned folder's branch while browsing below it. A location it doesn't list (inside a hidden
+/// folder, say) gets the path line as far as it goes, with nothing selected.
 /// </summary>
 public sealed class FolderTreeViewModel : ObservableObject
 {
     readonly FolderTreeContext _context;
     readonly IFavoritesStore _favorites;
     readonly INotesStore _notes;
-    FolderNode? _favoritesNode, _pcNode, _tagsNode, _selected;
+    readonly ITreePlaces _places;
+    FolderNode? _favoritesNode, _pcNode, _networkNode, _linuxNode, _tagsNode, _selected;
+    List<FolderNode> _pinnedNodes = new();
     List<FolderNode> _pathChain = new();
+    string? _location;
     int _quiet;
 
-    public FolderTreeViewModel(FolderTreeContext context, IFavoritesStore favorites, INotesStore notes)
+    public FolderTreeViewModel(FolderTreeContext context, IFavoritesStore favorites, INotesStore notes, ITreePlaces places)
     {
         _context = context;
         _favorites = favorites;
         _notes = notes;
+        _places = places;
         _context.ChildrenUpdated += OnChildrenUpdated;
+        _context.Quietly = Quietly;
     }
 
     /// <summary>The user picked a node: show this location.</summary>
@@ -40,8 +46,11 @@ public sealed class FolderTreeViewModel : ObservableObject
     /// <summary>The nodes from the root down to the location shown, as far as the tree lists it.</summary>
     public IReadOnlyList<FolderNode> PathChain => _pathChain;
 
-    /// <summary>The favorite folder the current location was reached through (the tree stays in 즐겨찾기), or null.</summary>
-    public FolderNode? FavoriteAnchor { get; private set; }
+    /// <summary>
+    /// The favorite or pinned folder the current location was reached through (the tree stays in its branch), or null
+    /// (the tree follows the location under 내 PC).
+    /// </summary>
+    public FolderNode? Anchor { get; private set; }
 
     /// <summary>The selected node, if it is a real folder (what keyboard commands on the tree act on).</summary>
     public FolderNode? SelectedFolder => _selected is { IsFolder: true } node ? node : null;
@@ -53,15 +62,33 @@ public sealed class FolderTreeViewModel : ObservableObject
         _pathChain = new();
         _favoritesNode = FolderNode.Group("즐겨찾기", FavoriteNodes(), ShellInfo.FavoritesIcon);
         Roots.Add(_favoritesNode);
+        _pinnedNodes = _places.PinnedFolders().Select(f => FolderNode.Pinned(_context, f.Path, f.Name)).ToList();
+        foreach (var pinned in _pinnedNodes)
+            Roots.Add(pinned);
         _pcNode = FolderNode.Group(Locations.ThisPc, DriveInfo.GetDrives().Select(d => FolderNode.Drive(_context, d)));
         Roots.Add(_pcNode);
+        // Folded until opened: opening 네트워크 looks for computers, opening a distribution starts WSL.
+        _networkNode = _places.IsNetworkAvailable ? FolderNode.Discovered(_context, "네트워크", ShellInfo.NetworkIcon, _places.FindComputers) : null;
+        AddFolded(_networkNode);
+        var distros = _places.LinuxDistros();
+        _linuxNode = distros.Count > 0
+            ? FolderNode.Group("Linux", distros.Select(d => FolderNode.Folder(_context, d, Locations.LastSegment(d))), ShellInfo.LinuxIcon)
+            : null;
+        AddFolded(_linuxNode);
         // Tags start folded: there can be many.
         _tagsNode = FolderNode.Group("태그", TagNodes(), ShellInfo.TagIcon);
-        _tagsNode.IsExpanded = false;
-        Roots.Add(_tagsNode);
-        if (FavoriteAnchor != null)
-            FavoriteAnchor = FindFavoriteFolder(FavoriteAnchor.FullPath!);
-        Probing = Task.WhenAll(ProbeFavoritesAsync(), ProbeAsync(_pcNode));
+        AddFolded(_tagsNode);
+        if (Anchor != null)
+            Anchor = FindAnchor(Anchor.FullPath!);
+        Probing = Task.WhenAll(ProbeFavoritesAsync(), ProbeAsync(_pcNode), Task.WhenAll(_pinnedNodes.Select(n => n.ProbeAsync())));
+    }
+
+    void AddFolded(FolderNode? node)
+    {
+        if (node == null)
+            return;
+        node.IsExpanded = false;
+        Roots.Add(node);
     }
 
     /// <summary>
@@ -106,8 +133,8 @@ public sealed class FolderTreeViewModel : ObservableObject
         _selected = node;
         if (_quiet > 0)
             return;
-        // Remember whether this node is inside a favorite, so later moves stay in that branch.
-        FavoriteAnchor = node.SelfAndAncestors().FirstOrDefault(n => n.Favorite is { IsGroup: false });
+        // Remember whether this node is inside a favorite or pinned folder, so later moves stay in that branch.
+        Anchor = node.SelfAndAncestors().FirstOrDefault(IsAnchor);
         if (!node.IsVirtual)
             NavigateRequested?.Invoke(node.FullPath!);
         else if (node == _pcNode)
@@ -115,24 +142,27 @@ public sealed class FolderTreeViewModel : ObservableObject
     }
 
     /// <summary>Going to a favorite: keep the tree inside its 즐겨찾기 branch.</summary>
-    public void AnchorToFavorite(string path) => FavoriteAnchor = FindFavoriteFolder(path);
+    public void AnchorToFavorite(string path) => Anchor = FindAnchor(path);
 
-    public void ClearAnchor() => FavoriteAnchor = null;
+    public void ClearAnchor() => Anchor = null;
+
+    bool IsAnchor(FolderNode node) => node.Favorite is { IsGroup: false } || _pinnedNodes.Contains(node);
 
     /// <summary>Expands the tree down to <paramref name="path"/> and selects it, if the tree lists it.</summary>
     public void Sync(string path)
     {
         if (_pcNode == null)
             return;
+        _location = path;
         if (Locations.IsThisPc(path))
         {
-            FavoriteAnchor = null;
+            Anchor = null;
             SelectPath(_pcNode, new List<FolderNode> { _pcNode });
             return;
         }
         if (SearchLocation.TryParse(path) is { } search)
         {
-            FavoriteAnchor = null;
+            Anchor = null;
             // A tag list selects its tag in the 태그 branch; other searches aren't in the tree.
             var tagNode = search.Kind == SearchKind.Tag
                 ? _tagsNode?.Children.FirstOrDefault(n => string.Equals(n.TagName, search.Query, StringComparison.CurrentCultureIgnoreCase))
@@ -147,28 +177,54 @@ public sealed class FolderTreeViewModel : ObservableObject
             return;
         }
 
-        // Browsing through a favorite: keep following the path inside that 즐겨찾기 branch.
-        // Only once the location leaves the favorite folder does the tree switch to 내 PC.
-        if (FavoriteAnchor != null && Locations.IsSameOrUnder(path, FavoriteAnchor.FullPath!))
+        // Browsing through a favorite or pinned folder: keep following the path inside that branch.
+        // Only once the location leaves that folder does the tree switch to 내 PC.
+        if (Anchor != null && Locations.IsSameOrUnder(path, Anchor.FullPath!))
         {
-            var favoriteChain = FavoriteAnchor.SelfAndAncestors().Reverse().ToList();
-            foreach (var group in favoriteChain.Take(favoriteChain.Count - 1))
+            var anchorChain = Anchor.SelfAndAncestors().Reverse().ToList();
+            foreach (var group in anchorChain.Take(anchorChain.Count - 1))
                 group.IsExpanded = true;
-            SelectPath(Descend(FavoriteAnchor, path[FavoriteAnchor.FullPath!.TrimEnd('\\').Length..], favoriteChain), favoriteChain);
+            SelectPath(Descend(Anchor, RelativePath(path, Anchor), anchorChain), anchorChain);
             return;
         }
-        FavoriteAnchor = null;
+        Anchor = null;
 
-        string root = Path.GetPathRoot(path) ?? "";
-        var drive = _pcNode.Children.FirstOrDefault(n => string.Equals(n.FullPath, root, StringComparison.OrdinalIgnoreCase));
-        if (drive == null)
+        var chain = ChainToStart(path);
+        if (chain.Count == 0 || chain[^1].FullPath == null)
         {
-            SelectPath(null, new List<FolderNode>());
+            SelectPath(null, chain);   // the network's computers not found yet: the line goes as far as 네트워크
             return;
         }
-        _pcNode.IsExpanded = true;
-        var chain = new List<FolderNode> { _pcNode, drive };
-        SelectPath(Descend(drive, path[root.Length..], chain), chain);
+        SelectPath(Descend(chain[^1], RelativePath(path, chain[^1]), chain), chain);
+    }
+
+    static string RelativePath(string path, FolderNode folder) => path[folder.FullPath!.TrimEnd('\\').Length..];
+
+    /// <summary>
+    /// The nodes down to where <paramref name="path"/> starts, expanded: 내 PC and its drive, Linux and its
+    /// distribution, or 네트워크 and the computer. Empty if the tree has no such start. For a network path whose
+    /// computer isn't listed yet it ends at 네트워크, which goes looking (the tree follows once it is found).
+    /// </summary>
+    List<FolderNode> ChainToStart(string path)
+    {
+        string root = Path.GetPathRoot(path) ?? "";
+        string? server = Locations.ServerOf(path);
+        foreach (var (group, start) in new[] { (_pcNode, root), (_linuxNode, root), (_networkNode, server) })
+        {
+            if (group == null || start == null)
+                continue;
+            if (group.Children.FirstOrDefault(n => string.Equals(n.FullPath?.TrimEnd('\\'), start.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) is { } node)
+            {
+                group.IsExpanded = true;
+                return new List<FolderNode> { group, node };
+            }
+        }
+        if (server != null && _networkNode != null)
+        {
+            _networkNode.IsExpanded = true;
+            return new List<FolderNode> { _networkNode };
+        }
+        return new List<FolderNode>();
     }
 
     /// <summary>
@@ -190,14 +246,14 @@ public sealed class FolderTreeViewModel : ObservableObject
         return node;
     }
 
-    /// <summary>The favorite folder node (in the 즐겨찾기 branch) for a path, if there is one.</summary>
-    FolderNode? FindFavoriteFolder(string path)
+    /// <summary>The favorite folder node (in the 즐겨찾기 branch) for a path, else the pinned folder's, if there is one.</summary>
+    FolderNode? FindAnchor(string path)
     {
         IEnumerable<FolderNode> Walk(FolderNode group) => group.Children
             .Where(c => c.Favorite != null)
             .SelectMany(c => c.Favorite!.IsGroup ? Walk(c) : new[] { c });
-        return _favoritesNode == null ? null
-            : Walk(_favoritesNode).FirstOrDefault(n => string.Equals(n.FullPath, path, StringComparison.OrdinalIgnoreCase));
+        var favorites = _favoritesNode == null ? Enumerable.Empty<FolderNode>() : Walk(_favoritesNode);
+        return favorites.Concat(_pinnedNodes).FirstOrDefault(n => string.Equals(n.FullPath, path, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <param name="node">
@@ -254,9 +310,9 @@ public sealed class FolderTreeViewModel : ObservableObject
             _favoritesNode.Children.Add(node);
         _favoritesNode.IsExpanded = true;
         Probing = Task.WhenAll(Probing, ProbeFavoritesAsync());
-        if (FavoriteAnchor != null)
+        if (Anchor != null)
         {
-            FavoriteAnchor = FindFavoriteFolder(FavoriteAnchor.FullPath!);
+            Anchor = FindAnchor(Anchor.FullPath!);
             Sync(location);
         }
     }
@@ -311,10 +367,16 @@ public sealed class FolderTreeViewModel : ObservableObject
     /// </summary>
     public bool RefreshWherePathStops() => _selected == null && _pathChain.LastOrDefault() is { } end && end.RefreshChildren();
 
-    // Children added or removed above the location move the rows the red path line runs past.
+    // Children added or removed above the location move the rows the red path line runs past. Where the line
+    // stopped, short of the location, the new children may continue it: network and WSL folders are read in the
+    // background, so the tree follows a path there one folder at a time.
     void OnChildrenUpdated(FolderNode node)
     {
-        if (_pathChain.Contains(node))
+        if (!_pathChain.Contains(node))
+            return;
+        if (_selected == null && node == _pathChain[^1] && Locations.IsUnc(_location))
+            Sync(_location);
+        else
             MarkPath(new List<FolderNode>(_pathChain));
     }
 

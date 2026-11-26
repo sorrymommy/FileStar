@@ -13,6 +13,12 @@ public interface IFileOperations
 {
     bool ClipboardHasFiles { get; }
 
+    /// <summary>
+    /// The paths a 잘라내기 (here or in Explorer) left on the clipboard: the next paste moves them. Empty after a copy,
+    /// and never throws (it is read on every clipboard change).
+    /// </summary>
+    IReadOnlySet<string> CutPaths { get; }
+
     /// <summary>Puts paths on the clipboard in Explorer's format, so copy/paste works both ways.</summary>
     void SetClipboard(IReadOnlyList<string> paths, bool cut);
 
@@ -63,6 +69,34 @@ public sealed class ShellFileOperations(INotesStore notes, IUndoHistory undo, IW
             catch (ExternalException) { return false; }
         }
     }
+
+    public IReadOnlySet<string> CutPaths
+    {
+        get
+        {
+            // Read on every clipboard change: most changes aren't files, and that is answered without opening the clipboard.
+            if (!ClipboardData.HasFiles())
+                return new HashSet<string>();
+            try
+            {
+                if (!ClipboardSaysMove())
+                    return new HashSet<string>();
+                return new HashSet<string>(Clipboard.GetFileDropList().Cast<string>(), StringComparer.OrdinalIgnoreCase);
+            }
+            // Another program's data: the clipboard may be locked, or its owner may fail to render it, in any number of
+            // ways (COM failures arrive as many exception types). A fade that doesn't show must not become a warning.
+            catch (Exception ex)
+            {
+                Perf.Log($"cut paths: 0x{ex.HResult:X8} {ex.Message}");
+                return new HashSet<string>();
+            }
+        }
+    }
+
+    /// <summary>The files on the clipboard were cut, not copied (Explorer's "Preferred DropEffect").</summary>
+    static bool ClipboardSaysMove() =>
+        ClipboardData.ReadFromClipboard("Preferred DropEffect", sizeof(int)) is { Length: sizeof(int) } effect &&
+        (BitConverter.ToInt32(effect) & DROPEFFECT_MOVE) != 0;
 
     public async Task<bool> DeleteAsync(IReadOnlyList<string> paths, bool permanently, bool noConfirm = false, bool record = true)
     {
@@ -118,8 +152,7 @@ public sealed class ShellFileOperations(INotesStore notes, IUndoHistory undo, IW
     async Task<bool> PastePathsAsync(string folder)
     {
         var sources = Clipboard.GetFileDropList().Cast<string>().ToList();
-        bool move = ClipboardData.ReadFromClipboard("Preferred DropEffect", sizeof(int)) is { Length: sizeof(int) } effect &&
-                    (BitConverter.ToInt32(effect) & DROPEFFECT_MOVE) != 0;
+        bool move = ClipboardSaysMove();
         bool ok = await TransferAsync(sources, folder, move);
         if (ok && move)
             Clipboard.Clear();   // the cut files are gone from their old place, as in Explorer

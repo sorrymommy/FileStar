@@ -108,6 +108,20 @@
             </Setter.Value>
         </Setter>
     </Style>
+    <!-- A row of FileStar's file lists (both panes, FileItem rows): hidden files and files cut to the clipboard are
+         drawn faded, as in Explorer. -->
+    <Style x:Key="FileRow" TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        <Setter Property="Padding" Value="0,2"/>
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsHidden}" Value="True">
+                <Setter Property="Opacity" Value="0.55"/>
+            </DataTrigger>
+            <DataTrigger Binding="{Binding IsCut}" Value="True">
+                <Setter Property="Opacity" Value="0.4"/>
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
     <Style TargetType="ListBox">
         <Setter Property="Background" Value="{DynamicResource Th.Input.Bg}"/>
         <Setter Property="Foreground" Value="{DynamicResource Th.Text}"/>

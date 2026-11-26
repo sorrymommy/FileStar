@@ -50,6 +50,11 @@ public sealed partial class MainViewModel
     public ICommand PropertiesCommand { get; private set; } = null!;
     public ICommand UndoCommand { get; private set; } = null!;
 
+    // ── The toolbar's file buttons: the list being used (either one in 두 창 보기) ──
+    public ICommand CutActiveCommand { get; private set; } = null!;
+    public ICommand CopyActiveCommand { get; private set; } = null!;
+    public ICommand PasteActiveCommand { get; private set; } = null!;
+
     // ── 폴더 비교 ──
     public ICommand CompareOffCommand { get; private set; } = null!;
     public ICommand CopyRightCommand { get; private set; } = null!;
@@ -100,7 +105,7 @@ public sealed partial class MainViewModel
         ShowInExplorerCommand = new RelayCommand(ShowInExplorer);
         CutCommand = new RelayCommand(() => ClipboardSelected(cut: true), () => Editable && AnySelected);
         CopyCommand = new RelayCommand(() => ClipboardSelected(cut: false), () => Editable && AnySelected);
-        PasteCommand = new AsyncRelayCommand(PasteIntoCurrentFolderAsync, () => !InVirtual && _s.FileOps.ClipboardHasFiles);
+        PasteCommand = new AsyncRelayCommand(PasteIntoCurrentFolderAsync, () => !InVirtual && Editable && _s.FileOps.ClipboardHasFiles);
         CopyToDualCommand = new AsyncRelayCommand(() => SendToDualAsync(move: false), () => DualMenuVisible);
         MoveToDualCommand = new AsyncRelayCommand(() => SendToDualAsync(move: true), () => DualMenuVisible && Editable);
         DeleteCommand = new RelayCommand(() => _ = DeleteSelectedAsync(IsShiftDown()), () => Editable && AnySelected);
@@ -111,6 +116,10 @@ public sealed partial class MainViewModel
         CopyPathCommand = new RelayCommand(CopySelectedPaths);
         PropertiesCommand = new RelayCommand(ShowSelectedProperties, () => AnySelected);
         UndoCommand = new AsyncRelayCommand(UndoLastAsync, () => CanUndo);
+
+        CutActiveCommand = new RelayCommand(() => ClipboardActive(cut: true), () => CanClipboardActive);
+        CopyActiveCommand = new RelayCommand(() => ClipboardActive(cut: false), () => CanClipboardActive);
+        PasteActiveCommand = new AsyncRelayCommand(PasteIntoActiveAsync, () => CanPasteActive);
 
         CompareOffCommand = new RelayCommand(() => SetCompare(false));
         CopyRightCommand = new AsyncRelayCommand(() => SyncSideAsync(toRight: true), () => Compare.CanCopyRight);
