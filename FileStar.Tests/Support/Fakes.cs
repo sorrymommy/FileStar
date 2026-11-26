@@ -71,6 +71,30 @@ public sealed class FakeUpdates : IUpdateService
     public void ApplyOnExit() { }
 }
 
+/// <summary>
+/// No pinned folders, network or WSL unless a test sets them: the real ones are the user's own folders and whatever
+/// the network discovers, which tests must not depend on.
+/// </summary>
+public sealed class FakeTreePlaces : ITreePlaces
+{
+    public List<(string Name, string Path)> Pinned { get; } = new();
+    public List<string> Computers { get; } = new();
+    public List<string> Distros { get; } = new();
+    public bool IsNetworkAvailable { get; set; }
+    public int Discoveries { get; private set; }
+
+    public IReadOnlyList<(string Name, string Path)> PinnedFolders() => Pinned;
+
+    public IReadOnlyList<string> FindComputers()
+    {
+        Discoveries++;
+        lock (Computers)
+            return Computers.ToList();
+    }
+
+    public IReadOnlyList<string> LinuxDistros() => Distros;
+}
+
 /// <summary>Never fires: tests reload explicitly.</summary>
 public sealed class FakeWatch : IFolderWatchService
 {
@@ -107,6 +131,9 @@ public sealed class DirectFileOperations(INotesStore notes, IUndoHistory undo) :
 
     public bool ClipboardHasFiles => ClipboardPaths.Count > 0;
 
+    public IReadOnlySet<string> CutPaths =>
+        ClipboardCut ? new HashSet<string>(ClipboardPaths, StringComparer.OrdinalIgnoreCase) : new HashSet<string>();
+
     public void SetClipboard(IReadOnlyList<string> paths, bool cut)
     {
         ClipboardPaths.Clear();
@@ -114,7 +141,14 @@ public sealed class DirectFileOperations(INotesStore notes, IUndoHistory undo) :
         ClipboardCut = cut;
     }
 
-    public Task<bool> PasteAsync(string folder) => TransferAsync(ClipboardPaths.ToList(), folder, ClipboardCut);
+    /// <summary>As the real one: a paste after a cut empties the clipboard (the files are gone from their old place).</summary>
+    public async Task<bool> PasteAsync(string folder)
+    {
+        bool ok = await TransferAsync(ClipboardPaths.ToList(), folder, ClipboardCut);
+        if (ok && ClipboardCut)
+            ClipboardPaths.Clear();
+        return ok;
+    }
 
     public Task<bool> TransferAsync(IReadOnlyList<string> sources, string folder, bool move, bool record = true)
     {
@@ -191,7 +225,7 @@ public sealed class TestServices : IDisposable
         Favorites = JsonFavoritesStore.Load(Data.File("favorites.json", "[]"));
         Settings = new JsonSettingsStore(Data.Combine("settings.json"));
         Services = new AppServices(Notes, Favorites, Settings, Recent, Undo, FileOps, FileSystem, Watch, Dialogs, Windows, Shell,
-            new FakeTheme(), new FakeUpdates(), new JsonAiSettingsStore(Data.Combine("ai.json")));
+            new FakeTheme(), new FakeUpdates(), new JsonAiSettingsStore(Data.Combine("ai.json")), Places);
     }
 
     public TempDir Data { get; } = new();
@@ -207,6 +241,7 @@ public sealed class TestServices : IDisposable
     public FakeDialogs Dialogs { get; } = new();
     public FakeWindows Windows { get; } = new();
     public FakeShell Shell { get; } = new();
+    public FakeTreePlaces Places { get; } = new();
     public AppServices Services { get; }
 
     public void Dispose()

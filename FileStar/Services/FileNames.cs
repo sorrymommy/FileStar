@@ -14,9 +14,13 @@ public static class FileNames
     /// </summary>
     public static void EnsurePlainName(string name)
     {
-        if (name.Trim().Length == 0 || name.Trim() is "." or ".." || HasInvalidChars(name))
+        if (!IsPlainName(name))
             throw new ArgumentException(InvalidCharsMessage, nameof(name));
     }
+
+    /// <summary>See <see cref="EnsurePlainName"/>.</summary>
+    public static bool IsPlainName(string name) =>
+        name.Trim().Length > 0 && name.Trim() is not ("." or "..") && !HasInvalidChars(name);
 
     /// <summary>The part of a name to preselect for renaming, as Explorer does: everything but the extension.</summary>
     public static int StemLength(string name, string extension, bool isDirectory) =>

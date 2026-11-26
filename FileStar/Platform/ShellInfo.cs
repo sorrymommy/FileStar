@@ -112,17 +112,54 @@ internal static class ShellInfo
                 return _thisPcIcon;
             if (SHGetSpecialFolderLocation(IntPtr.Zero, CSIDL_DRIVES, out var pidl) != 0)
                 return null;
-            try
-            {
-                var info = new SHFILEINFO();
-                if (SHGetFileInfo(pidl, 0, ref info, (uint)Marshal.SizeOf(info), SHGFI_PIDL | SHGFI_ICON | SHGFI_SMALLICON) != IntPtr.Zero)
-                    _thisPcIcon = TakeIcon(info.hIcon);
-            }
-            finally
-            {
-                ILFree(pidl);
-            }
-            return _thisPcIcon;
+            return _thisPcIcon = TakePidlIcon(pidl);
+        }
+    }
+
+    static ImageSource? _linuxIcon;
+    static bool _linuxIconLooked;
+
+    /// <summary>The penguin of Explorer's "Linux" folder (WSL), or null without WSL. A local shell lookup, no WSL start-up.</summary>
+    public static ImageSource? LinuxIcon
+    {
+        get
+        {
+            if (_linuxIconLooked)
+                return _linuxIcon;
+            _linuxIconLooked = true;
+            if (SHParseDisplayName("::{B2B4A4D1-2754-4140-A2EB-9A76D9D7CDC6}", IntPtr.Zero, out var pidl, 0, out _) != 0)
+                return null;
+            return _linuxIcon = TakePidlIcon(pidl);
+        }
+    }
+
+    static ImageSource? _networkIcon, _computerIcon;
+
+    /// <summary>The icon of Explorer's 네트워크.</summary>
+    public static ImageSource? NetworkIcon => _networkIcon ??= StockIcon(SIID_MYNETWORK);
+
+    /// <summary>A computer on the network. A stock icon: asking the shell about "\\NAME" itself would reach for the network.</summary>
+    public static ImageSource? ComputerIcon => _computerIcon ??= StockIcon(SIID_SERVER);
+
+    static ImageSource? StockIcon(uint id)
+    {
+        var info = new SHSTOCKICONINFO { cbSize = (uint)Marshal.SizeOf<SHSTOCKICONINFO>() };
+        return SHGetStockIconInfo(id, SHGSI_ICON | SHGSI_SMALLICON, ref info) == 0 ? TakeIcon(info.hIcon) : null;
+    }
+
+    /// <summary>The small icon of a shell item, freeing <paramref name="pidl"/>.</summary>
+    static ImageSource? TakePidlIcon(IntPtr pidl)
+    {
+        try
+        {
+            var info = new SHFILEINFO();
+            return SHGetFileInfo(pidl, 0, ref info, (uint)Marshal.SizeOf(info), SHGFI_PIDL | SHGFI_ICON | SHGFI_SMALLICON) != IntPtr.Zero
+                ? TakeIcon(info.hIcon)
+                : null;
+        }
+        finally
+        {
+            ILFree(pidl);
         }
     }
 

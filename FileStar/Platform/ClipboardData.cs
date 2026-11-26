@@ -25,11 +25,43 @@ public static class ClipboardData
         }
     }
 
-    /// <summary>The first <paramref name="maxBytes"/> bytes of <paramref name="format"/> in the clipboard, or null if it isn't there.</summary>
-    public static byte[]? ReadFromClipboard(string format, int maxBytes) => Use(data => Read(data, format, maxBytes));
+    const uint CF_HDROP = 15;
+
+    /// <summary>Files (a file drop list) are on the clipboard. Doesn't open the clipboard, so it never waits on another program.</summary>
+    public static bool HasFiles() => IsClipboardFormatAvailable(CF_HDROP);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool IsClipboardFormatAvailable(uint format);
+
+    const int CLIPBRD_E_CANT_OPEN = unchecked((int)0x800401D0);
+    const int BusyRetries = 5, BusyRetryDelayMs = 20;
+
+    /// <summary>
+    /// The first <paramref name="maxBytes"/> bytes of <paramref name="format"/> in the clipboard, or null if it isn't there.
+    /// Waits briefly while another program has the clipboard open (clipboard history and other watchers read it the
+    /// moment it changes, just when FileStar does), as WPF's own Clipboard calls do; throws if it stays busy, rather
+    /// than answering as if the format weren't there.
+    /// </summary>
+    public static byte[]? ReadFromClipboard(string format, int maxBytes)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return Use(data => Read(data, format, maxBytes, throwIfBusy: true));
+            }
+            catch (COMException ex) when (ex.HResult == CLIPBRD_E_CANT_OPEN && attempt < BusyRetries)
+            {
+                Thread.Sleep(BusyRetryDelayMs);
+            }
+        }
+    }
 
     /// <summary>The first <paramref name="maxBytes"/> bytes of <paramref name="format"/>'s global memory, or null if it isn't offered that way.</summary>
-    public static byte[]? Read(IComDataObject data, string format, int maxBytes)
+    public static byte[]? Read(IComDataObject data, string format, int maxBytes) => Read(data, format, maxBytes, throwIfBusy: false);
+
+    static byte[]? Read(IComDataObject data, string format, int maxBytes, bool throwIfBusy)
     {
         var request = new FORMATETC
         {
@@ -45,8 +77,9 @@ public static class ClipboardData
         {
             data.GetData(ref request, out medium);
         }
-        catch (COMException)
+        catch (COMException ex) when (!(throwIfBusy && ex.HResult == CLIPBRD_E_CANT_OPEN))
         {
+            Perf.Log($"clipboard {format}: 0x{ex.HResult:X8} {ex.Message}");
             return null;   // offered, but the owner failed to render it
         }
         try

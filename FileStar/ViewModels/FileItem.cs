@@ -7,7 +7,7 @@ namespace FileStar.ViewModels;
 public sealed class FileItem : ObservableObject
 {
     FileNote? _note;
-    bool _isRenaming, _containsNotes;
+    bool _isRenaming, _containsNotes, _isCut;
     CompareState _compareState;
     ImageSource? _icon;
     bool _iconLoaded, _shellInfoPending, _iconShownBlank, _typeShownBlank;
@@ -29,6 +29,13 @@ public sealed class FileItem : ObservableObject
     {
         get => _isRenaming;
         set => Set(ref _isRenaming, value);
+    }
+
+    /// <summary>Cut to the clipboard (here or in Explorer): drawn faded until it is pasted or something else is cut or copied.</summary>
+    public bool IsCut
+    {
+        get => _isCut;
+        set => Set(ref _isCut, value);
     }
 
     /// <summary>The user's memo about this file, if any.</summary>
@@ -252,7 +259,7 @@ public sealed class FileItem : ObservableObject
             string ext = isDirectory ? "" : Path.GetExtension(info.Name);
             return new FileItem
             {
-                Name = info.Name,
+                Name = Locations.ItemName(info),
                 FullPath = info.FullName,
                 IsDirectory = isDirectory,
                 IsHidden = info.Attributes.HasFlag(FileAttributes.Hidden),

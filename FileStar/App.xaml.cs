@@ -62,7 +62,8 @@ public partial class App : Application
             Shell: new ShellService(recent),
             Theme: new ThemeManager(),
             Updates: new VelopackUpdateService(),
-            AiSettings: aiSettings);
+            AiSettings: aiSettings,
+            Places: new WindowsTreePlaces());
         Perf.Log("services ready");
 
         var window = new MainWindow(new MainViewModel(services, _args));

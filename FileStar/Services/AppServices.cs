@@ -15,4 +15,5 @@ public sealed record AppServices(
     IShellService Shell,
     IThemeService Theme,
     IUpdateService Updates,
-    IAiSettingsStore AiSettings);
+    IAiSettingsStore AiSettings,
+    ITreePlaces Places);

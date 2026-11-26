@@ -59,8 +59,6 @@
     <SolidColorBrush x:Key="Th.Accent" Color="#6FA8E8"/>
     <SolidColorBrush x:Key="Th.Folder" Color="#E0B33A"/>
     <SolidColorBrush x:Key="Th.Favorite.On" Color="#E8B020"/>
-    <SolidColorBrush x:Key="Th.Crumb.Bg" Color="#6B4740"/>
-    <SolidColorBrush x:Key="Th.Crumb.Fg" Color="#F2F2F2"/>
     <SolidColorBrush x:Key="Th.TreeLine" Color="#4A4A4A"/>
     <SolidColorBrush x:Key="Th.TreePath" Color="#E0675C"/>
     <SolidColorBrush x:Key="Th.TreeArrow" Color="#9A9A9A"/>

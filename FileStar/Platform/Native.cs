@@ -55,6 +55,27 @@ internal static class Native
     [DllImport("shell32.dll")]
     public static extern int SHGetSpecialFolderLocation(IntPtr hwnd, int csidl, out IntPtr ppidl);
 
+    /// <summary>An ID list for a parsing name such as "::{CLSID}" (a shell folder without a path).</summary>
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern int SHParseDisplayName(string name, IntPtr bindContext, out IntPtr pidl, uint sfgaoIn, out uint sfgaoOut);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct SHSTOCKICONINFO
+    {
+        public uint cbSize;
+        public IntPtr hIcon;
+        public int iSysImageIndex;
+        public int iIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szPath;
+    }
+
+    public const uint SIID_SERVER = 15, SIID_MYNETWORK = 17;
+    public const uint SHGSI_ICON = 0x100, SHGSI_SMALLICON = 0x1;
+
+    [DllImport("shell32.dll")]
+    public static extern int SHGetStockIconInfo(uint siid, uint flags, ref SHSTOCKICONINFO info);
+
     [DllImport("shell32.dll")]
     public static extern void ILFree(IntPtr pidl);
 

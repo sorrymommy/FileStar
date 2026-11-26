@@ -106,6 +106,12 @@ public partial class MainWindow : Window
         // Coming back to this window: another FileStar window may have changed memos, and files may have been
         // moved in another program while FileStar was closed or in the background.
         Activated += async (_, _) => await _vm.OnActivatedAsync();
+        // Cut files are drawn faded, whether they were cut here or in Explorer (and also before FileStar started).
+        SourceInitialized += (_, _) =>
+        {
+            ClipboardWatcher.Watch(this, _vm.OnClipboardChanged);
+            _vm.OnClipboardChanged();
+        };
         _windowsMenuHover.Tick += WindowsMenuHover_Tick;
         Loaded += async (_, _) =>
         {
@@ -160,6 +166,12 @@ public partial class MainWindow : Window
                     row.Focus();
                 else
                     FileList.Focus();
+                break;
+            case ViewModels.FocusTarget.ActiveList:
+                if (_vm.IsDualActive)
+                    DualPane.FocusList();
+                else
+                    MoveFocus(ViewModels.FocusTarget.FileList);
                 break;
             case ViewModels.FocusTarget.Tree:
                 FolderTree.Focus();
@@ -366,14 +378,50 @@ public partial class MainWindow : Window
 
     void AddressBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => AddressBox.SelectAll();
 
-    void AddressBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    /// <summary>
+    /// A click on a path button goes there. Anywhere else in the bar, the first click turns it into the address as
+    /// text, all of it selected; letting the click through would move the caret to the click point and undo the
+    /// selection. Later clicks place the caret normally.
+    /// </summary>
+    void AddressFrame_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // The first click only focuses (selecting everything); otherwise the click would immediately
-        // move the caret to the click point and undo the selection. Later clicks place the caret normally.
-        if (AddressBox.IsKeyboardFocusWithin)
+        if (AddressBox.IsKeyboardFocusWithin || IsInCrumbButton(e.OriginalSource as DependencyObject))
             return;
         AddressBox.Focus();
         e.Handled = true;
+    }
+
+    bool IsInCrumbButton(DependencyObject? element)
+    {
+        for (; element != null && element != AddressFrame;
+             element = element is System.Windows.Media.Visual ? System.Windows.Media.VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element))
+        {
+            if (element is Button)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// A click anywhere outside the address bar ends editing it, as in Explorer, also on spots that don't take the
+    /// focus themselves (the list's empty space, the toolbar). The keyboard goes to the list being used, so the click
+    /// doesn't change which list that is; whatever was clicked can still take the focus after this.
+    /// </summary>
+    void Window_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!AddressBox.IsKeyboardFocused || AddressFrame.IsMouseOver)
+            return;
+        MoveFocus(ViewModels.FocusTarget.ActiveList);
+    }
+
+    // Left without Enter (a click in the list, Tab): show where the list is, not the half-typed address.
+    void AddressBox_LostFocus(object sender, RoutedEventArgs e) => _vm.RestoreAddress();
+
+    // A long path shows its end (the folder being shown), as Explorer's does; the start scrolls out on the left.
+    void CrumbScroller_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (e.ExtentWidthChange != 0 || e.ViewportWidthChange != 0)
+            CrumbScroller.ScrollToRightEnd();
     }
 
     void SearchQueryBox_KeyDown(object sender, KeyEventArgs e)

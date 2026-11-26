@@ -29,13 +29,23 @@ public sealed class LocalFileSystem : IFileSystem
 
     EnumerationOptions Options => new() { IgnoreInaccessible = true, AttributesToSkip = AttributesToSkip };
 
-    public List<FileSystemInfo> GetEntries(string path) =>
-        new DirectoryInfo(path).EnumerateFileSystemInfos("*", Options).ToList();
+    // A computer on the network ("\\NAME") isn't a folder Windows can list; its shared folders are what it holds.
+
+    public List<FileSystemInfo> GetEntries(string path)
+    {
+        if (!Locations.IsServer(path))
+            return new DirectoryInfo(path).EnumerateFileSystemInfos("*", Options).ToList();
+        return Shares(path)?.Cast<FileSystemInfo>().ToList() ?? throw new IOException($"'{path}'에 연결할 수 없습니다.");
+    }
 
     public List<DirectoryInfo> GetSubfolders(string path) => TryGetSubfolders(path) ?? new();
 
+    static List<DirectoryInfo>? Shares(string server) => NetworkShell.DiskShares(server)?.Select(s => new DirectoryInfo(s)).ToList();
+
     public List<DirectoryInfo>? TryGetSubfolders(string path)
     {
+        if (Locations.IsServer(path))
+            return Shares(path);
         try
         {
             var list = new DirectoryInfo(path).EnumerateDirectories("*", Options).ToList();
@@ -50,6 +60,8 @@ public sealed class LocalFileSystem : IFileSystem
 
     public bool HasSubfolders(string path)
     {
+        if (Locations.IsServer(path))
+            return true;   // found out when it is opened: asking for its shares is a network round trip
         try { return Directory.EnumerateDirectories(path, "*", Options).Any(); }
         catch { return false; }
     }

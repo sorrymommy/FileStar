@@ -13,7 +13,7 @@ public static class ThisPcItems
         {
             ("바탕 화면", Environment.GetFolderPath(Environment.SpecialFolder.Desktop)),
             ("문서", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
-            ("다운로드", Path.Combine(home, "Downloads")),
+            ("다운로드", Locations.Downloads),
             ("사진", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)),
             ("음악", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)),
             ("동영상", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos)),
@@ -68,7 +68,7 @@ public static class ThisPcItems
             "ThisPc" => Locations.ThisPc,
             "Desktop" => Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             "Documents" => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "Downloads" => Path.Combine(home, "Downloads"),
+            "Downloads" => Locations.Downloads,
             "Home" => home,
             _ => null,
         };

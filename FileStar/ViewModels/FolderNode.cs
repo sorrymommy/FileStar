@@ -15,6 +15,12 @@ public sealed class FolderTreeContext(IFileSystem files, INotesStore notes)
 
     internal void OnChildrenUpdated(FolderNode node) => ChildrenUpdated?.Invoke(node);
 
+    /// <summary>
+    /// Runs a change to a node's children made in the background (not by the user): if it takes away the selected
+    /// node, the view selects its parent, and that must not navigate there. Set by the tree.
+    /// </summary>
+    public Action<Action> Quietly { get; set; } = change => change();
+
     public NoteMark MarkFor(string path) =>
         notes.Get(path) != null ? NoteMark.Memo : notes.FolderHasNotes(path) ? NoteMark.InsideFolder : NoteMark.None;
 }
@@ -23,10 +29,14 @@ public sealed class FolderTreeContext(IFileSystem files, INotesStore notes)
 public sealed class FolderNode : ObservableObject
 {
     // The "has subfolders" marker until the node is expanded; one per node, since the tree binds its IsSelected/IsExpanded.
-    static FolderNode Placeholder() => new(null, "", null, false);
+    // Seen only while subfolders are read in the background (network and WSL folders, the computers on the network).
+    static FolderNode Placeholder() => Note("불러오는 중...");
 
     readonly FolderTreeContext? _context;
     readonly bool _exactIcon;
+    // For a branch whose entries are found rather than read from a folder (the computers on the network).
+    Func<IReadOnlyList<string>>? _find;
+    int _discoveries;
     bool _isExpanded, _isSelected, _loaded, _isRenaming;
     bool _isLast, _isOnPath, _pathLineTop, _pathLineBottom;
     bool _probePending;
@@ -97,8 +107,11 @@ public sealed class FolderNode : ObservableObject
     /// <summary>A real folder (not a group, not a tag).</summary>
     public bool IsFolder => !IsVirtual && !IsTag;
 
-    /// <summary>Drives can be opened and pasted into, but not cut, deleted or renamed.</summary>
-    public bool IsMovable => IsFolder && !Locations.IsRoot(FullPath!);
+    /// <summary>
+    /// Drives, shared folders and the folders pinned at the top (the user's own 바탕 화면, 다운로드, 문서) can be
+    /// opened and pasted into, but not cut, deleted or renamed from the tree.
+    /// </summary>
+    public bool IsMovable => IsFolder && !IsRoot && !Locations.IsRoot(FullPath!);
 
     public ObservableCollection<FolderNode> Children { get; } = new();
 
@@ -119,6 +132,7 @@ public sealed class FolderNode : ObservableObject
         : IsFavoriteGroup
         ? _icon ??= ShellInfo.GetIcon("", true)
         : IsVirtual ? (Name == Locations.ThisPc ? ShellInfo.ThisPcIcon : null)
+        : Locations.IsServer(FullPath) ? ShellInfo.ComputerIcon
         : _probePending ? ShellInfo.GetIcon("", true)   // the plain folder icon: asking the shell about the path could block
         : _icon ??= ShellInfo.GetIcon(FullPath!, true, _exactIcon));
 
@@ -131,6 +145,8 @@ public sealed class FolderNode : ObservableObject
                 return;
             if (IsFavoriteGroup)
                 Favorite!.IsExpanded = value;   // remembered in favorites.json
+            else if (value && _find != null)
+                _ = DiscoverAsync();   // every time: computers come and go
             else if (value && _loaded)
                 RefreshChildren();   // opened again: folders may have come and gone since
             else if (value)
@@ -195,12 +211,55 @@ public sealed class FolderNode : ObservableObject
     public static FolderNode Folder(FolderTreeContext context, string path, string? name = null, bool exactIcon = false)
     {
         var node = new FolderNode(context, name ?? Locations.DisplayName(path), path, exactIcon);
-        if (context.Files.HasSubfolders(path))
+        if (MayHaveSubfolders(context, path))
             node.Children.Add(Placeholder());
         else
             node._loaded = true;
         return node;
     }
+
+    // Asking a network or WSL folder is a round trip each (and may start WSL): such a folder gets an expander,
+    // and finds out what it holds when it is opened.
+    static bool MayHaveSubfolders(FolderTreeContext context, string path) =>
+        Locations.IsUnc(path) || context.Files.HasSubfolders(path);
+
+    /// <summary>A folder at the top of the tree (바탕 화면, 다운로드, 문서), probed in the background like the drives.</summary>
+    public static FolderNode Pinned(FolderTreeContext context, string path, string name)
+    {
+        var node = Unprobed(context, path, name);
+        node.IsRoot = true;
+        return node;
+    }
+
+    /// <summary>
+    /// A top-level branch whose entries are found each time it is opened, off the UI thread (the computers on the
+    /// network: discovery takes seconds). <paramref name="find"/> gives their paths; each becomes a folder node.
+    /// </summary>
+    public static FolderNode Discovered(FolderTreeContext context, string name, ImageSource? icon, Func<IReadOnlyList<string>> find)
+    {
+        var node = new FolderNode(context, name, null, false) { IsRoot = true, BranchIcon = icon, _find = find };
+        node.Children.Add(Placeholder());
+        return node;
+    }
+
+    async Task DiscoverAsync()
+    {
+        var find = _find!;
+        int discovery = ++_discoveries;
+        // Its own thread: discovery holds it for seconds, which would starve the thread pool.
+        var found = await Task.Factory.StartNew(find, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        if (discovery != _discoveries)
+            return;   // opened again meanwhile: the newer search is the one that counts
+        var existing = Children.Where(c => c.FullPath != null).ToDictionary(c => c.FullPath!, StringComparer.OrdinalIgnoreCase);
+        var nodes = found.Distinct(StringComparer.OrdinalIgnoreCase).Select(path => existing.TryGetValue(path, out var node) ? node : Folder(_context!, path, path.TrimStart('\\'))).ToList();
+        // Nothing found still leaves an expander, so folding and opening it again looks again.
+        SyncChildren(nodes.Count > 0 ? nodes : new List<FolderNode> { Children.FirstOrDefault(c => c.Name == NothingFound) ?? Note(NothingFound) });
+    }
+
+    const string NothingFound = "찾은 컴퓨터 없음";
+
+    /// <summary>A line of text in place of children (not a folder: selecting it goes nowhere).</summary>
+    static FolderNode Note(string text) => new(null, text, null, false) { _loaded = true };
 
     /// <summary>
     /// A folder node made without touching the disk: it shows an expander and the plain folder icon until
@@ -293,19 +352,49 @@ public sealed class FolderNode : ObservableObject
         else
         {
             Children.Clear();
-            if (_context.Files.HasSubfolders(FullPath!))
+            if (MayHaveSubfolders(_context, FullPath!))
                 Children.Add(Placeholder());
             else
                 _loaded = true;
         }
     }
 
+    /// <summary>Network and WSL folders: a sleeping server or WSL starting up can take seconds to answer.</summary>
+    bool ReadsInBackground => Locations.IsUnc(FullPath);
+
     /// <summary>
     /// Re-reads the subfolders and updates the children to match (see <see cref="UpdateChildren(IEnumerable{string})"/>).
     /// A folder that can't be read just now (a network drive dropping out) keeps its children.
     /// </summary>
-    public bool RefreshChildren() =>
-        IsFolder && _context?.Files.TryGetSubfolders(FullPath!) is { } subfolders && UpdateChildren(subfolders.Select(d => d.Name));
+    /// <returns>Whether anything changed; always false for a folder read in the background, which reports through
+    /// <see cref="FolderTreeContext.ChildrenUpdated"/> once read.</returns>
+    public bool RefreshChildren()
+    {
+        if (!IsFolder || _context == null)
+            return false;
+        if (ReadsInBackground)
+        {
+            _ = ReadChildrenInBackgroundAsync();
+            return false;
+        }
+        return _context.Files.TryGetSubfolders(FullPath!) is { } subfolders && UpdateChildren(subfolders.Select(Locations.ItemName));
+    }
+
+    /// <summary>Until the answer comes the node keeps what it shows (the first time, "불러오는 중...").</summary>
+    async Task ReadChildrenInBackgroundAsync()
+    {
+        var files = _context!.Files;
+        string path = FullPath!;
+        int reloads = _reloads;
+        var subfolders = await Task.Factory.StartNew(() => files.TryGetSubfolders(path),
+            CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        if (reloads != _reloads)
+            return;   // reloaded meanwhile: that read is the one that counts
+        if (subfolders != null)
+            UpdateChildren(subfolders.Select(Locations.ItemName));
+        else if (Children is [{ FullPath: null }])
+            SyncChildren(new());   // can't be read: no expander promising subfolders
+    }
 
     /// <summary>
     /// Brings the children in line with <paramref name="subfolders"/> (the folder's subfolder names now), keeping the
@@ -329,24 +418,39 @@ public sealed class FolderNode : ObservableObject
         names.Sort(Native.StrCmpLogicalW);   // the order GetSubfolders gives
         // Matched by exact name, so a change of case alone (a → A) shows the new name.
         var existing = Children.Where(c => c.FullPath != null).ToDictionary(c => c.Name, StringComparer.Ordinal);
-        var wanted = names.Select(n => existing.TryGetValue(n, out var node) ? node : Folder(_context, Path.Join(FullPath, n), n)).ToList();
+        return SyncChildren(names.Select(n => existing.TryGetValue(n, out var node) ? node : Folder(_context, Path.Join(FullPath, n), n)).ToList());
+    }
+
+    /// <summary>
+    /// Makes the children exactly <paramref name="wanted"/> by removing, moving and inserting, never by clearing: a
+    /// node that stays keeps its place in the view, and its selection, which the view would otherwise move elsewhere.
+    /// </summary>
+    bool SyncChildren(List<FolderNode> wanted)
+    {
         if (wanted.SequenceEqual(Children))
             return false;
-        var keep = wanted.ToHashSet();
-        for (int i = Children.Count - 1; i >= 0; i--)
-            if (!keep.Contains(Children[i]))
-                Children.RemoveAt(i);
-        for (int i = 0; i < wanted.Count; i++)
+        var change = () =>
         {
-            if (i < Children.Count && Children[i] == wanted[i])
-                continue;
-            int at = Children.IndexOf(wanted[i]);
-            if (at >= 0)
-                Children.Move(at, i);
-            else
-                Children.Insert(i, wanted[i]);
-        }
-        _context.OnChildrenUpdated(this);
+            var keep = wanted.ToHashSet();
+            for (int i = Children.Count - 1; i >= 0; i--)
+                if (!keep.Contains(Children[i]))
+                    Children.RemoveAt(i);
+            for (int i = 0; i < wanted.Count; i++)
+            {
+                if (i < Children.Count && Children[i] == wanted[i])
+                    continue;
+                int at = Children.IndexOf(wanted[i]);
+                if (at >= 0)
+                    Children.Move(at, i);
+                else
+                    Children.Insert(i, wanted[i]);
+            }
+        };
+        if (_context != null)
+            _context.Quietly(change);
+        else
+            change();
+        _context?.OnChildrenUpdated(this);
         return true;
     }
 
@@ -355,8 +459,13 @@ public sealed class FolderNode : ObservableObject
         if (_loaded || FullPath == null || _context == null)
             return;
         _loaded = true;
+        if (ReadsInBackground)
+        {
+            _ = ReadChildrenInBackgroundAsync();
+            return;
+        }
         Children.Clear();
         foreach (var dir in _context.Files.GetSubfolders(FullPath))
-            Children.Add(Folder(_context, dir.FullName, dir.Name));
+            Children.Add(Folder(_context, dir.FullName, Locations.ItemName(dir)));
     }
 }

@@ -34,7 +34,9 @@ public sealed class BrowserTab(string path) : ObservableObject
 
     public ImageSource? Icon => IsThisPc ? ShellInfo.ThisPcIcon
         : Search is { } search ? (search.Kind == SearchKind.Tag ? ShellInfo.TagIcon : ShellInfo.SearchIcon)
-        : ShellInfo.GetIcon(_path, true, Locations.IsRoot(_path));
+        : Locations.IsServer(_path) ? ShellInfo.ComputerIcon
+        // A drive's own icon; a shared folder's would be asked of the network, on the UI thread.
+        : ShellInfo.GetIcon(_path, true, Locations.IsRoot(_path) && !Locations.IsUnc(_path));
 
     public bool IsActive
     {

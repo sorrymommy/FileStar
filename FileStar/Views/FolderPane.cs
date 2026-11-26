@@ -32,6 +32,7 @@ public sealed class FolderPane : DockPanel
         // ── List (columns come from the main list via SyncColumns) ──
         _list.View = new GridView();
         _list.SelectionMode = SelectionMode.Extended;
+        _list.SetResourceReference(ItemsControl.ItemContainerStyleProperty, "FileRow");
         _list.SetBinding(ItemsControl.ItemsSourceProperty, new Binding("List.View"));
         Children.Add(_list);
 
@@ -67,6 +68,15 @@ public sealed class FolderPane : DockPanel
 
     /// <summary>Keys the main window would otherwise take for itself (it checks this first).</summary>
     public bool HasFocus => _list.IsKeyboardFocusWithin;
+
+    /// <summary>Gives the list the keyboard: its selected row, or the list itself.</summary>
+    public void FocusList()
+    {
+        if (_list.SelectedItem != null && _list.ItemContainerGenerator.ContainerFromItem(_list.SelectedItem) is ListViewItem row)
+            row.Focus();
+        else
+            _list.Focus();
+    }
 
     void BuildTitleStrip()
     {
